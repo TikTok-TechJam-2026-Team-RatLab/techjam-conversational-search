@@ -21,6 +21,14 @@ COLORS = {
     "pink", "purple", "red", "silver", "white", "yellow",
 }
 MATERIALS = {"cotton", "denim", "leather", "linen", "polyester", "silk", "wool"}
+COLOR_RE = re.compile(r"\b(?:" + "|".join(sorted(COLORS)) + r")\b", re.IGNORECASE)
+MATERIAL_RE = re.compile(r"\b(?:" + "|".join(sorted(MATERIALS)) + r")\b", re.IGNORECASE)
+SIZE_RE = re.compile(r"\bsize\s*[:#-]?\s*[a-z0-9]+\b", re.IGNORECASE)
+BUDGET_RE = re.compile(
+    r"\b(?:budget\s*(?:is|of|:)?\s*\$?\d+(?:\.\d+)?|under\s+\$?\d+(?:\.\d+)?)\b"
+    r"|\$\d+(?:\.\d+)?",
+    re.IGNORECASE,
+)
 NON_CONSTRAINT_PHRASES = (
     "ask me about",
     "not quite right",
@@ -48,6 +56,39 @@ def _constraint_attribute(constraint: str) -> str:
     return "other"
 
 
+def _constraint_parts(constraint: str) -> list[tuple[str, str]]:
+    """Split recognized attributes out of a potentially mixed clause."""
+    remainder = constraint
+    recognized: list[tuple[str, str]] = []
+    for attribute, pattern in (
+        ("color", COLOR_RE),
+        ("material", MATERIAL_RE),
+        ("size", SIZE_RE),
+        ("budget", BUDGET_RE),
+    ):
+        matches = [match.group(0).strip() for match in pattern.finditer(remainder)]
+        if matches:
+            recognized.extend((attribute, value) for value in matches)
+            remainder = pattern.sub(" ", remainder)
+
+    remainder = re.sub(r"\s+", " ", remainder).strip(" ,:!?")
+    has_category = bool(re.search(r"\b(?:looking for|need|want)\b", constraint, re.IGNORECASE))
+    parts: list[tuple[str, str]] = []
+    if has_category and remainder:
+        parts.append(("category", remainder))
+    elif remainder:
+        cleaned = re.sub(
+            r"^(?:preferably|prefer|color|colour|material)\s*:?[ ]*",
+            "",
+            remainder,
+            flags=re.IGNORECASE,
+        ).strip()
+        if cleaned:
+            parts.append((_constraint_attribute(cleaned), cleaned))
+    parts.extend(recognized)
+    return parts
+
+
 @dataclass
 class SessionState:
     user_profile: dict
@@ -60,11 +101,12 @@ class SessionState:
         override = named_override or OVERRIDE_RE.search(message)
         if override:
             new_constraint = override.group("new").strip(" ,:!?\t\r\n")
-            attribute = _constraint_attribute(new_constraint)
-            if named_override and attribute == "other":
-                attribute = _constraint_attribute(named_override.group("old"))
-            self.active_constraints.pop(attribute, None)
-            self._store_constraint(new_constraint, attribute)
+            parts = _constraint_parts(new_constraint)
+            if len(parts) == 1 and parts[0][0] == "other" and named_override:
+                parts[0] = (_constraint_attribute(named_override.group("old")), parts[0][1])
+            for attribute, constraint in parts:
+                self.active_constraints.pop(attribute, None)
+                self._store_constraint(constraint, attribute)
             return
         self._add_constraints(message)
 
@@ -80,7 +122,8 @@ class SessionState:
                 or any(phrase in lowered for phrase in NON_CONSTRAINT_PHRASES)
             ):
                 continue
-            self._store_constraint(constraint, _constraint_attribute(constraint))
+            for attribute, value in _constraint_parts(constraint):
+                self._store_constraint(value, attribute)
 
     def _store_constraint(self, constraint: str, attribute: str) -> None:
         values = self.active_constraints.setdefault(attribute, [])
