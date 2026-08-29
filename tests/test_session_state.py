@@ -192,7 +192,71 @@ class SessionStateTest(unittest.TestCase):
         self.assertEqual(state.active_constraints["size"], ["size 10"])
         self.assertIn("under 80", state.active_constraints["budget"][0])
         self.assertEqual(state.constraint_updated_at["color"], 4)
-        self.assertTrue(state.retrieval_context().startswith("red"))
+        self.assertIn("red", state.retrieval_context())
+        self.assertNotIn("blue", state.retrieval_context())
+
+    def test_multiple_values_for_same_attribute_are_retained(self) -> None:
+        self.agent.reset("session-a", {})
+
+        self.agent.respond("session-a", "I want red or blue shoes.", 1, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["color"], ["red", "blue"])
+        self.assertIn("shoes", state.active_constraints["category"][0])
+
+    def test_ordinary_constraints_add_but_explicit_override_replaces(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want blue shoes. Size 10.", 1, 3)
+        self.agent.respond("session-a", "Cotton.", 2, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["color"], ["blue"])
+        self.assertEqual(state.active_constraints["material"], ["cotton"])
+        self.assertEqual(state.active_constraints["size"], ["size 10"])
+
+        self.agent.respond("session-a", "Actually, replace blue with red.", 3, 3)
+        self.assertEqual(state.active_constraints["color"], ["red"])
+        self.assertEqual(state.active_constraints["material"], ["cotton"])
+        self.assertEqual(state.active_constraints["size"], ["size 10"])
+
+    def test_category_word_in_long_requirement_does_not_replace_category(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want shoes.", 1, 3)
+        self.agent.respond(
+            "session-a",
+            "Waterproof shoes with strong arch support for hiking.",
+            2,
+            3,
+        )
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["category"], ["i want shoes"])
+        self.assertIn("waterproof shoes with strong arch support for hiking", state.active_constraints["other"])
+
+    def test_removal_and_new_constraint_in_same_message(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want Northwind blue shoes.", 1, 3)
+        self.agent.respond(
+            "session-a",
+            "I no longer care about the brand, but make it red.",
+            2,
+            3,
+        )
+
+        state = self.agent._sessions["session-a"]
+        self.assertNotIn("brand", state.active_constraints)
+        self.assertEqual(state.active_constraints["color"], ["red"])
+        self.assertIn("shoes", state.retrieval_context())
+
+    def test_negation_and_positive_constraint_in_same_message(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want red shoes.", 1, 3)
+        self.agent.respond("session-a", "Not red and size 10.", 2, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertNotIn("color", state.active_constraints)
+        self.assertEqual(state.negative_constraints["color"], ["red"])
+        self.assertEqual(state.active_constraints["size"], ["size 10"])
 
     def test_respond_before_reset_raises_error(self) -> None:
         with self.assertRaises(RuntimeError):

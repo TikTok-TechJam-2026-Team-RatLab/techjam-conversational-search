@@ -10,6 +10,12 @@ COMMON_COLORS = frozenset({
 })
 COMMON_MATERIALS = frozenset({"cotton", "denim", "leather", "linen", "polyester", "silk", "wool"})
 GENERIC_CATEGORIES = frozenset({"clothing", "clothing shoes jewelry", "women", "men"})
+VOCABULARY_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+    "i", "imported", "in", "is", "it", "key", "machine", "me", "my", "of",
+    "on", "only", "or", "please", "some", "that", "the", "this", "to", "want",
+    "wash", "with", "would", "you",
+})
 TOKEN_RE = re.compile(r"[a-z0-9]+(?:['-][a-z0-9]+)?", re.IGNORECASE)
 SIZE_RE = re.compile(r"\bsize\s*[:#-]?\s*(?P<value>[a-z0-9][a-z0-9./-]*)\b", re.IGNORECASE)
 BUDGET_RE = re.compile(
@@ -31,7 +37,11 @@ REMOVE_ATTRIBUTE_RE = re.compile(
     r"(?:about\s+|for\s+)?(?:the\s+)?(?P<attribute>category|brand|color|colour|material|size|budget)\b",
     re.IGNORECASE,
 )
-NEGATION_RE = re.compile(r"(?:^|[.;,]\s*|\b(?:but|and)\s+)(?:not|no)\s+(?P<value>[^.;,]+)", re.IGNORECASE)
+NEGATION_RE = re.compile(
+    r"(?:^|[.;,]\s*|\b(?:but|and)\s+)(?:not|no)\s+"
+    r"(?P<value>.+?)(?=\s+(?:and|but)\s+|[.;,]|$)",
+    re.IGNORECASE,
+)
 CONSTRAINT_PREFIX_RE = re.compile(
     r"^(?:for that,?\s*)?(?:what matters is|a key requirement is)\s*:\s*",
     re.IGNORECASE,
@@ -44,15 +54,13 @@ def _normalize(value: object) -> str:
     return " ".join(TOKEN_RE.findall(str(value).lower()))
 
 
-def _structured_terms(value: object, include_words: bool = True) -> set[str]:
+def _structured_terms(value: object) -> set[str]:
     values = value if isinstance(value, list) else [value]
     result: set[str] = set()
     for item in values:
         normalized = _normalize(item)
         if normalized and len(normalized) <= 40 and len(normalized.split()) <= 4:
             result.add(normalized)
-            if include_words:
-                result.update(word for word in normalized.split() if len(word) >= 3)
     return result
 
 
@@ -78,19 +86,22 @@ class CatalogVocabulary:
         for key, value in details.items():
             normalized_key = _normalize(key)
             if "manufacturer" in normalized_key or "brand" in normalized_key:
-                self.brands.update(_structured_terms(value, include_words=False))
+                self.brands.update(_structured_terms(value))
             elif "color" in normalized_key or "colour" in normalized_key:
                 self.colors.update(_structured_terms(value))
             elif "material" in normalized_key or "fabric" in normalized_key:
                 self.materials.update(_structured_terms(value))
 
     def values_for(self, attribute: str) -> set[str]:
-        return {
-            "category": self.categories,
-            "brand": self.brands,
-            "color": self.colors,
-            "material": self.materials,
-        }.get(attribute, set())
+        if attribute == "category":
+            return self.categories
+        if attribute == "brand":
+            return self.brands - self.categories - self.colors - self.materials - VOCABULARY_STOPWORDS
+        if attribute == "color":
+            return self.colors - self.materials - VOCABULARY_STOPWORDS
+        if attribute == "material":
+            return self.materials - VOCABULARY_STOPWORDS
+        return set()
 
 
 def _find_vocabulary_terms(text: str, vocabulary: set[str]) -> list[str]:
@@ -135,7 +146,7 @@ class SessionState:
         removal = REMOVE_ATTRIBUTE_RE.search(message)
         if removal:
             self._remove_attribute(removal.group("attribute"), update_turn)
-            return
+            message = REMOVE_ATTRIBUTE_RE.sub("", message)
 
         named_override = NAMED_OVERRIDE_RE.search(message)
         override = named_override or OVERRIDE_RE.search(message)
@@ -182,34 +193,42 @@ class SessionState:
                 r"^(?:preferably|prefer|brand|color|colour|material)\s*:?[ ]*", "", remainder,
                 flags=re.IGNORECASE,
             ).strip()
-            if cleaned:
-                category_matches = _find_vocabulary_terms(cleaned, self.vocabulary.categories)
-                attribute = "category" if category_matches else "other"
+            if cleaned and cleaned.lower() not in {"and", "or"}:
+                normalized = _normalize(cleaned)
+                explicit_category = bool(re.match(r"^category\s*:", cleaned, re.IGNORECASE))
+                attribute = "category" if explicit_category or normalized in self.vocabulary.categories else "other"
                 parts.append((attribute, cleaned))
         parts.extend(recognized)
         return parts
 
     def _add_constraints(self, message: str, turn: int) -> None:
+        parsed: dict[str, list[str]] = {}
         for clause in re.split(r"[.;]", message):
             constraint = CONSTRAINT_PREFIX_RE.sub("", clause).strip(" ,:!?\t\r\n")
+            constraint = re.sub(r"^(?:and|but)\s+", "", constraint, flags=re.IGNORECASE)
             lowered = constraint.lower()
             if not constraint or "don't have" in lowered or any(p in lowered for p in NON_CONSTRAINT_PHRASES):
                 continue
-            for attribute, value in self._parts(constraint):
-                self._set_constraint(attribute, value, turn)
+            clause_parts = self._parts(constraint)
+            for attribute, value in clause_parts:
+                values = parsed.setdefault(attribute, [])
+                normalized = _normalize(value)
+                if normalized and normalized not in values:
+                    values.append(normalized)
+        for attribute, values in parsed.items():
+            self._set_constraints(attribute, values, turn)
 
-    def _set_constraint(self, attribute: str, value: str, turn: int) -> None:
-        normalized = _normalize(value)
-        if not normalized:
+    def _set_constraints(self, attribute: str, values: list[str], turn: int) -> None:
+        normalized_values = list(dict.fromkeys(_normalize(value) for value in values if _normalize(value)))
+        if not normalized_values:
             return
         if attribute != "other":
-            self.active_constraints[attribute] = [normalized]
+            self.active_constraints[attribute] = normalized_values
         else:
-            values = self.active_constraints.setdefault(attribute, [])
-            if normalized not in values:
-                values.append(normalized)
+            current = self.active_constraints.setdefault(attribute, [])
+            current.extend(value for value in normalized_values if value not in current)
         negatives = self.negative_constraints.get(attribute, [])
-        self.negative_constraints[attribute] = [item for item in negatives if item != normalized]
+        self.negative_constraints[attribute] = [item for item in negatives if item not in normalized_values]
         if not self.negative_constraints[attribute]:
             self.negative_constraints.pop(attribute, None)
         self.constraint_updated_at[attribute] = turn
@@ -220,9 +239,13 @@ class SessionState:
             old_parts = self._parts(old_value)
             if old_parts:
                 parts[0] = (old_parts[-1][0], parts[0][1])
+        grouped: dict[str, list[str]] = {}
         for attribute, value in parts:
-            self.active_constraints.pop(attribute, None)
-            self._set_constraint(attribute, value, turn)
+            grouped.setdefault(attribute, []).append(value)
+        for attribute, values in grouped.items():
+            if attribute != "other" or old_value:
+                self.active_constraints.pop(attribute, None)
+            self._set_constraints(attribute, values, turn)
 
     def _negate_constraints(self, value: str, turn: int) -> None:
         parts = self._parts(value)
@@ -246,9 +269,8 @@ class SessionState:
         self.constraint_updated_at[attribute] = turn
 
     def retrieval_context(self) -> str:
-        attributes = sorted(
-            self.active_constraints,
-            key=lambda attribute: self.constraint_updated_at.get(attribute, 0),
-            reverse=True,
+        return " ".join(
+            value
+            for values in self.active_constraints.values()
+            for value in values
         )
-        return " ".join(value for attribute in attributes for value in self.active_constraints[attribute])
