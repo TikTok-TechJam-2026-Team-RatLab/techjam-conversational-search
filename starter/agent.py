@@ -34,7 +34,7 @@ def _terms(text: str) -> list[str]:
 
 
 class Agent:
-    """Editable weak baseline: stateless BM25 retrieval with no LLM dependency."""
+    """BM25 retrieval baseline with per-session dialogue state and no LLM dependency."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
