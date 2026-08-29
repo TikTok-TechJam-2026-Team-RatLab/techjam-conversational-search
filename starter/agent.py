@@ -1,4 +1,5 @@
 from __future__ import annotations
+from starter.session_state import SessionState
 
 import json
 import re
@@ -38,7 +39,7 @@ class Agent:
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
-        self._sessions: set[str] = set()
+        self._sessions: dict[str, SessionState] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -72,7 +73,9 @@ class Agent:
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile is anonymized and may be used for personalization.
-        self._sessions.add(session_id)
+        self._sessions[session_id] = SessionState(
+            user_profile=dict(user_profile)
+        )
 
     def respond(
         self,
@@ -83,6 +86,7 @@ class Agent:
     ) -> dict:
         if session_id not in self._sessions:
             raise RuntimeError("reset must be called before respond")
+        self._sessions[session_id].add_message(user_message)
         unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
