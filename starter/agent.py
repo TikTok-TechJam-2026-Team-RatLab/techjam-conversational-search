@@ -2,6 +2,7 @@ from __future__ import annotations
 from starter.session_state import CatalogVocabulary, SessionState
 
 import json
+import math
 import re
 import sqlite3
 from pathlib import Path
@@ -13,6 +14,13 @@ STOPWORDS = {
     "i", "in", "is", "it", "me", "my", "of", "on", "or", "please", "some",
     "that", "the", "this", "to", "want", "with", "would", "you", "looking",
 }
+
+# Category and transactional numeric constraints are treated as hard constraints and
+# remain active until the user changes or removes them. Descriptive preferences are
+# allowed to fade so stale tastes do not dominate later turns.
+HARD_CONSTRAINT_ATTRIBUTES = frozenset({"category", "size", "budget"})
+SLOT_DECAY_LAMBDA = 0.35
+SOFT_SLOT_MIN_WEIGHT = 0.50
 
 
 def _text(value: object) -> str:
@@ -31,6 +39,49 @@ def _terms(text: str) -> list[str]:
         for token in TOKEN_RE.findall(text)
         if len(token) > 1 and token.lower() not in STOPWORDS
     ]
+
+
+def _slot_weight(attribute: str, updated_at: int, current_turn: int) -> float:
+    """Return the retrieval weight for a slot at the current turn.
+
+    Hard constraints do not decay. Soft preferences use exponential decay based on
+    the number of turns since they were last added or updated.
+    """
+    if attribute in HARD_CONSTRAINT_ATTRIBUTES:
+        return 1.0
+    age = max(0, current_turn - updated_at)
+    return math.exp(-SLOT_DECAY_LAMBDA * age)
+
+
+def _active_retrieval_terms(state: SessionState, current_turn: int) -> list[str]:
+    """Build retrieval terms while selectively decaying stale soft preferences."""
+    terms: list[str] = []
+    for attribute, values in state.active_constraints.items():
+        updated_at = state.constraint_updated_at.get(attribute, current_turn)
+        weight = _slot_weight(attribute, updated_at, current_turn)
+        if attribute not in HARD_CONSTRAINT_ATTRIBUTES and weight < SOFT_SLOT_MIN_WEIGHT:
+            continue
+        for value in values:
+            terms.extend(_terms(value))
+    return list(dict.fromkeys(terms))[:40]
+
+
+def _negative_retrieval_terms(state: SessionState) -> list[str]:
+    """Return normalized terms that must be excluded from lexical retrieval."""
+    terms: list[str] = []
+    for values in state.negative_constraints.values():
+        for value in values:
+            terms.extend(_terms(value))
+    return list(dict.fromkeys(terms))
+
+
+def _fts_expression(positive_terms: list[str], negative_terms: list[str]) -> str:
+    if not positive_terms:
+        return ""
+    expression = " OR ".join(f'"{term}"' for term in positive_terms)
+    for term in negative_terms:
+        expression = f'({expression}) NOT "{term}"'
+    return expression
 
 
 class Agent:
@@ -91,8 +142,11 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
         state.add_message(user_message, turn)
-        unique_terms = list(dict.fromkeys(_terms(state.retrieval_context())))[:40]
-        expression = " OR ".join(f'"{term}"' for term in unique_terms)
+
+        positive_terms = _active_retrieval_terms(state, turn)
+        negative_terms = _negative_retrieval_terms(state)
+        expression = _fts_expression(positive_terms, negative_terms)
+
         if not expression:
             recommendations: list[dict] = []
         else:
