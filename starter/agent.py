@@ -1,5 +1,5 @@
 from __future__ import annotations
-from starter.session_state import SessionState
+from starter.session_state import CatalogVocabulary, SessionState
 
 import json
 import re
@@ -40,6 +40,7 @@ class Agent:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
+        self.vocabulary = CatalogVocabulary()
         self._build_index()
 
     def _build_index(self) -> None:
@@ -53,6 +54,7 @@ class Agent:
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 product = json.loads(line)
+                self.vocabulary.add_product(product)
                 batch.append(
                     (
                         str(product["parent_asin"]),
@@ -74,7 +76,8 @@ class Agent:
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile is anonymized and may be used for personalization.
         self._sessions[session_id] = SessionState(
-            user_profile=dict(user_profile)
+            user_profile=dict(user_profile),
+            vocabulary=self.vocabulary,
         )
 
     def respond(
@@ -87,7 +90,7 @@ class Agent:
         if session_id not in self._sessions:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
-        state.add_message(user_message)
+        state.add_message(user_message, turn)
         unique_terms = list(dict.fromkeys(_terms(state.retrieval_context())))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
