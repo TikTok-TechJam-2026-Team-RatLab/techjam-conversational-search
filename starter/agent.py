@@ -1,77 +1,33 @@
 from __future__ import annotations
-from starter.session_state import CatalogVocabulary, SessionState
-
-import json
-import re
-import sqlite3
 from pathlib import Path
 
-
-TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
-STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
-    "i", "in", "is", "it", "me", "my", "of", "on", "or", "please", "some",
-    "that", "the", "this", "to", "want", "with", "would", "you", "looking",
-}
-
-
-def _text(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        return " ".join(f"{key} {item}" for key, item in value.items())
-    if isinstance(value, list):
-        return " ".join(str(item) for item in value)
-    return str(value)
-
-
-def _terms(text: str) -> list[str]:
-    return [
-        token.lower()
-        for token in TOKEN_RE.findall(text)
-        if len(token) > 1 and token.lower() not in STOPWORDS
-    ]
+from src.data_parser import load_catalog
+from src.dual_index import DualIndex, QueryEmbedder
+from starter.session_state import CatalogVocabulary, SessionState
 
 
 class Agent:
-    """BM25 retrieval baseline with per-session dialogue state and no LLM dependency."""
+    """State-aware sparse retrieval with validated optional dense-vector fusion."""
 
-    def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path = "data/catalog.jsonl",
+        embeddings_path: str | Path = "data/catalog_embeddings.npy",
+        manifest_path: str | Path = "data/catalog_embeddings.json",
+        query_embedder: QueryEmbedder | None = None,
+    ) -> None:
         self.catalog_path = Path(catalog_path)
-        self.connection = sqlite3.connect(":memory:")
+        self.catalog = load_catalog(self.catalog_path)
         self._sessions: dict[str, SessionState] = {}
         self.vocabulary = CatalogVocabulary()
-        self._build_index()
-
-    def _build_index(self) -> None:
-        cursor = self.connection.cursor()
-        cursor.execute(
-            "CREATE VIRTUAL TABLE products USING fts5("
-            "parent_asin UNINDEXED, title, categories, features, details, store, description, "
-            "tokenize='unicode61 remove_diacritics 2')"
+        for item in self.catalog.items:
+            self.vocabulary.add_product(item.as_product())
+        self.retriever = DualIndex(
+            self.catalog,
+            embeddings_path=embeddings_path,
+            manifest_path=manifest_path,
+            query_embedder=query_embedder,
         )
-        batch: list[tuple[str, str, str, str, str, str, str]] = []
-        with self.catalog_path.open(encoding="utf-8") as handle:
-            for line in handle:
-                product = json.loads(line)
-                self.vocabulary.add_product(product)
-                batch.append(
-                    (
-                        str(product["parent_asin"]),
-                        _text(product.get("title")),
-                        _text(product.get("categories")),
-                        _text(product.get("features")),
-                        _text(product.get("details")),
-                        _text(product.get("store")),
-                        _text(product.get("description")),
-                    )
-                )
-                if len(batch) >= 1000:
-                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                    batch.clear()
-        if batch:
-            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-        self.connection.commit()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile is anonymized and may be used for personalization.
@@ -91,17 +47,8 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
         state.add_message(user_message, turn)
-        unique_terms = list(dict.fromkeys(_terms(state.retrieval_context())))[:40]
-        expression = " OR ".join(f'"{term}"' for term in unique_terms)
-        if not expression:
-            recommendations: list[dict] = []
-        else:
-            rows = self.connection.execute(
-                "SELECT parent_asin FROM products WHERE products MATCH ? "
-                "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
-                (expression, top_k),
-            ).fetchall()
-            recommendations = [{"parent_asin": str(row[0])} for row in rows]
+        results = self.retriever.search(state.retrieval_context(), top_k=top_k)
+        recommendations = [{"parent_asin": parent_asin} for parent_asin, _ in results]
         return {
             "message": "Here are the closest matches I found.",
             "ask_attribute": None,
