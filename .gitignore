@@ -3,9 +3,8 @@ __pycache__/
 .DS_Store
 .env
 results.json
-data/catalog.jsonl
-data/releases/
 .venv/
+SHA256SUMS
 # Organizer-only code, private evaluation data, manifests, and build reports.
 organizer/
 secure/
@@ -17,3 +16,12 @@ docs/participant_release_checklist.md
 tests/test_5core_builder.py
 tests/test_organizer_pipeline.py
 *.log
+# Data files
+data/catalog.jsonl
+data/releases/
+data/*.index
+data/bm25s_index/
+data/parent_asins.json
+data/embeddings.npy
+*.jsonl.gz
+*.tar.gz
