@@ -1,0 +1,4 @@
+bm25s==0.3.11
+faiss-cpu==1.15.0
+numpy==2.2.6
+packaging==26.3
