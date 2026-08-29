@@ -21,8 +21,15 @@ For each session, your agent receives an anonymized preference profile and a sho
 
 The session ends when the target product appears in the scored Top 10 or after turn 10. Sessions cover Buying, Browsing, Intent Override, and Boundary behavior.
 
-## Download the Catalog
+## Set up Dual Index
+### Option A: Quick Download (Recommended for Fast Local Setup)
+Download `prebuilt_indices.tar.gz` from the GitHub Release attached to this repository, then run:
 
+```bash
+tar -xzvf prebuilt_indices.tar.gz
+```
+
+### Option B: Build from Source Locally
 Download `catalog.jsonl.gz` from the GitHub Release attached to this repository, then run:
 
 ```bash
@@ -30,8 +37,11 @@ gzip -dk catalog.jsonl.gz
 mv catalog.jsonl data/catalog.jsonl
 ```
 
-Verify the downloaded file using the published `SHA256SUMS` file.
+Verify the downloaded file using the published `SHA256SUMS` file, then run the `/scripts` folder
 
+```bash
+python3 scripts/run_all.py
+```
 ## Run the Starter
 
 Python 3.10 or later is recommended. The starter uses only the Python standard library.
