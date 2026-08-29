@@ -77,7 +77,7 @@ class SessionStateTest(unittest.TestCase):
 
         self.assertEqual(
             self.agent._sessions["session-a"].active_constraints,
-            {"category": ["I'm looking for shoes"], "color": ["Preferably blue"]},
+            {"category": ["I'm looking for shoes"], "color": ["blue"]},
         )
         self.assertEqual(response["recommendations"][0]["parent_asin"], "BLUE_SHOES")
 
@@ -97,6 +97,21 @@ class SessionStateTest(unittest.TestCase):
         context = self.agent._sessions["session-a"].retrieval_context().lower()
         self.assertIn("shoes", context)
         self.assertIn("size 10", context)
+        self.assertIn("red", context)
+        self.assertNotIn("blue", context)
+
+    def test_intent_override_removes_color_embedded_in_category_sentence(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I'm looking for blue shoes.", 1, 3)
+        self.agent.respond(
+            "session-a",
+            "Actually, ignore my earlier preference. What I need is: red.",
+            2,
+            3,
+        )
+
+        context = self.agent._sessions["session-a"].retrieval_context().lower()
+        self.assertIn("shoes", context)
         self.assertIn("red", context)
         self.assertNotIn("blue", context)
 
