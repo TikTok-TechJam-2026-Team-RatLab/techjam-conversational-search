@@ -1,0 +1,9 @@
+py_rust_stemmers-0.1.8.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNuwvFQg,4
+py_rust_stemmers-0.1.8.dist-info/METADATA,sha256=rUzaYPJfGrRt0u8fNY2AsQeLC959VctqqzP6OxmkVz8,3552
+py_rust_stemmers-0.1.8.dist-info/RECORD,,
+py_rust_stemmers-0.1.8.dist-info/WHEEL,sha256=7JL-UNaeAKwqD3UoxVviXWxHIGMKiaMe0XUDAEHKDIs,97
+py_rust_stemmers-0.1.8.dist-info/licenses/LICENSE,sha256=lEkFd3bJhOiOKeoe4TXK66I0d1bQx0SA96_E8W9jb2g,1084
+py_rust_stemmers-0.1.8.dist-info/sboms/py_rust_stemmers.cyclonedx.json,sha256=zYyPHx3dG8NktaoR7Cmm6c_b1ROgEz4S0KFPUZK2JI8,28791
+py_rust_stemmers/__init__.py,sha256=yz40wc_OCcpEW3bQWGa7ELT9hJfrHp2pmbNyPNAsi3c,147
+py_rust_stemmers/__pycache__/__init__.cpython-313.pyc,,
+py_rust_stemmers/py_rust_stemmers.cp312-win_amd64.pyd,sha256=md9ga3M7qbObAhwV3nV6d-zGYzSRmEzPlzMMOInij8w,537088

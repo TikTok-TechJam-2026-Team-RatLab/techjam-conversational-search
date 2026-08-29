@@ -1,0 +1,2 @@
+[console_scripts]
+bm25 = bm25s.cli:main
