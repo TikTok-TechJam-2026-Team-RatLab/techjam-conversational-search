@@ -35,9 +35,10 @@ measured latency shows that exact search is a real bottleneck.
 ## Reproducibility and Limitations
 
 - Runtime model/API cost: zero; all inference is local.
-- Network use: the first embedding-generation run may download the model. Evaluation never
-  initiates a download.
-- Dense evaluation requires both generated artifacts and access to the same cached query model.
+- Network use: dependency installation and the first model setup may download files. Evaluation
+  never initiates a download.
+- Dense evaluation requires both validated artifacts and access to the same locally cached query
+  model.
 - Generated catalog vectors are roughly 73 MiB and are deliberately excluded from Git.
 - The current clarification policy still returns no `ask_attribute`; improving browsing and
   boundary sessions remains later-phase work.
@@ -66,7 +67,7 @@ target was recovered in more sessions but sometimes appeared slightly lower with
 | Buying | `0.2375` | **`0.2875`** |
 | Intent override | `0.600` | `0.600` |
 
-The isolated test suite contains 28 tests and passes in both the standard-library sparse setup and
+The isolated test suite contains 30 tests and passes in both the standard-library sparse setup and
 the dependency-enabled development setup. Dense behavior is tested with deterministic vectors so
 the tests do not require a model download.
 
@@ -82,7 +83,7 @@ public sessions before selecting the sparse implementation:
 SQLite FTS therefore remains the sparse track; the BM25S dependency and its generated index are
 not carried into the clean branch.
 
-## Offline Submission Status
+## Dense Artifact Setup
 
 The measured hybrid score depends on two local resources that are intentionally absent from Git:
 
@@ -103,15 +104,19 @@ The earlier `v1.0 Artifacts` release remains a legacy bundle: it uses `asin_to_i
 of the validated manifest and does not provide the query-model cache.
 
 Runtime evaluation has been successfully tested with network access disabled after the declared
-dependencies and query model were downloaded once. This proves the scoring path makes no runtime
-network request, but does not yet prove that a completely fresh machine can be prepared when
-setup-time network access is also unavailable.
+dependencies and query model were downloaded once. The expected setup flow therefore uses internet
+access for `pip install` and the one-time FastEmbed model download, as is normal for Python project
+installation; evaluator runtime itself stays local.
 
-Before this draft is marked ready for final submission:
+To reproduce the hybrid score without regenerating the catalog matrix:
 
-- confirm whether organizer setup may download the declared model, or bundle an approved cache;
-- test artifact and model provisioning from a clean environment under the confirmed policy; and
-- record peak memory and evaluator latency in the final report.
+1. Install `requirements.txt` while online.
+2. Place both release artifacts in `data/` with their published filenames.
+3. Warm the query model once with
+   `python3 -c "from src.embedder import Embedder; print(Embedder(local_files_only=False).embed_query('setup check').shape)"`.
+4. Run `python3 -m evaluator.local_evaluator`.
 
-Until those checks are complete, a missing or incompatible resource safely produces the evaluated
-`0.170487` sparse fallback rather than an invalid run or an attempted network download.
+A first-time, completely air-gapped installer is not part of this Phase 1 merge. If later submission
+instructions explicitly require one, model-cache packaging can be handled as a separate submission
+task. A missing or incompatible artifact or query model safely produces the evaluated `0.170487`
+sparse fallback rather than an invalid run or an attempted runtime download.

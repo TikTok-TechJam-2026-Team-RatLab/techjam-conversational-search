@@ -68,6 +68,9 @@ On Windows PowerShell, activate the environment with:
 .venv\Scripts\Activate.ps1
 ```
 
+Dependency installation requires internet access unless the packages are already cached. On
+Windows, use `python` in place of `python3` in the commands below if necessary.
+
 Generate the vectors and their catalog-alignment manifest from the repository root:
 
 ```bash
@@ -79,22 +82,25 @@ time, the agent refuses network downloads: if the query model is unavailable, it
 back to sparse retrieval. Generated vectors, manifests, model caches, and local dependencies
 must not be committed.
 
+To avoid regenerating the 50,000 catalog vectors, download both
+`catalog_embeddings.npy` and `catalog_embeddings.json` from the
+[Phase 1 Clean Retrieval Artifacts v1 release](https://github.com/TikTok-TechJam-2026-Team-RatLab/techjam-conversational-search/releases/tag/phase1-clean-artifacts-v1)
+and place them in `data/`. Warm the query-model cache once while online:
+
+```bash
+python3 -c "from src.embedder import Embedder; print(Embedder(local_files_only=False).embed_query('setup check').shape)"
+```
+
 With vectors generated from the official 50,000-product catalog, the hybrid configuration scored
 Hit Rate@10 `0.255`, MRR `0.125421`, MTTC `8.695`, and technical score `0.211226` across all 200
 public sessions. The sparse fallback scored `0.170487`, so hybrid retrieval improved the technical
 score by 23.9%. See `docs/phase1_retrieval.md` for the full comparison.
 
-Dense scoring is not yet a complete offline submission bundle. Before final submission, either
-the organizer setup must be allowed to download and cache the FastEmbed model, or the compatible
-model cache must be provisioned alongside `catalog_embeddings.npy` and
-`catalog_embeddings.json`. Without both the artifacts and cached query model, the agent
-deliberately falls back to sparse retrieval.
-
-The validated matrix and manifest are published in the
-[Phase 1 Clean Retrieval Artifacts v1 release](https://github.com/TikTok-TechJam-2026-Team-RatLab/techjam-conversational-search/releases/tag/phase1-clean-artifacts-v1).
 After the declared dependencies and query model were downloaded once, the full evaluator was
-successfully rerun with network access disabled. A fresh-machine test with no setup-time network
-access still requires either an approved bundled model cache or confirmation of organizer policy.
+successfully rerun with network access disabled. The normal setup flow therefore uses internet
+access once for dependencies and the model cache, while evaluator runtime remains local. If either
+release artifact or the cached query model is missing, the agent deliberately falls back to sparse
+retrieval instead of attempting a runtime download.
 
 Run all isolated tests with:
 

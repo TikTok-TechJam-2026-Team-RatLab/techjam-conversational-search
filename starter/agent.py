@@ -12,11 +12,16 @@ class Agent:
     def __init__(
         self,
         catalog_path: str | Path = "data/catalog.jsonl",
-        embeddings_path: str | Path = "data/catalog_embeddings.npy",
-        manifest_path: str | Path = "data/catalog_embeddings.json",
+        embeddings_path: str | Path | None = None,
+        manifest_path: str | Path | None = None,
         query_embedder: QueryEmbedder | None = None,
     ) -> None:
         self.catalog_path = Path(catalog_path)
+        artifact_directory = self.catalog_path.parent
+        if embeddings_path is None:
+            embeddings_path = artifact_directory / "catalog_embeddings.npy"
+        if manifest_path is None:
+            manifest_path = artifact_directory / "catalog_embeddings.json"
         self.catalog = load_catalog(self.catalog_path)
         self._sessions: dict[str, SessionState] = {}
         self.vocabulary = CatalogVocabulary()

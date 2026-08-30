@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -28,6 +29,10 @@ class Embedder:
         cache_dir: str | Path | None = None,
         threads: int | None = None,
     ) -> None:
+        # Official ONNX Runtime builds support this process-wide switch. Set it
+        # before importing FastEmbed/ONNX Runtime so local inference emits no
+        # telemetry even when a platform build enables it by default.
+        os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
         try:
             from fastembed import TextEmbedding
         except ImportError as error:

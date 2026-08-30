@@ -43,6 +43,18 @@ class SessionStateTest(unittest.TestCase):
             ["I want shoes", "Preferably blue"],
         )
 
+    def test_custom_catalog_uses_sibling_optional_artifacts(self) -> None:
+        expected_directory = Path(self.temp_directory.name)
+
+        self.assertEqual(
+            self.agent.retriever.embeddings_path,
+            expected_directory / "catalog_embeddings.npy",
+        )
+        self.assertEqual(
+            self.agent.retriever.manifest_path,
+            expected_directory / "catalog_embeddings.json",
+        )
+
     def test_sessions_are_isolated(self) -> None:
         self.agent.reset("session-a", {"summary": "first user"})
         self.agent.reset("session-b", {"summary": "second user"})

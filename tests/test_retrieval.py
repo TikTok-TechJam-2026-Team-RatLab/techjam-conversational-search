@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import types
@@ -117,6 +118,15 @@ class EmbedderTest(unittest.TestCase):
         self.assertAlmostEqual(float(np.linalg.norm(query)), 1.0)
         self.assertEqual(FakeTextEmbedding.last_options["model_name"], "test-model")
         self.assertEqual(FakeTextEmbedding.last_options["local_files_only"], True)
+
+    def test_fastembed_adapter_disables_onnx_telemetry_before_loading(self) -> None:
+        fake_module = types.SimpleNamespace(TextEmbedding=FakeTextEmbedding)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ORT_DISABLE_TELEMETRY", None)
+            with patch.dict(sys.modules, {"fastembed": fake_module}):
+                Embedder(model_name="test-model")
+
+            self.assertEqual(os.environ["ORT_DISABLE_TELEMETRY"], "1")
 
 
 class DualIndexTest(unittest.TestCase):
