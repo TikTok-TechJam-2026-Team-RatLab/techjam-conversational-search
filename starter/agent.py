@@ -1,4 +1,5 @@
 from __future__ import annotations
+from starter.intent_routing import RankedResult, route_and_fuse
 from starter.session_state import SessionState
 
 import json
@@ -94,11 +95,27 @@ class Agent:
             recommendations: list[dict] = []
         else:
             rows = self.connection.execute(
-                "SELECT parent_asin FROM products WHERE products MATCH ? "
-                "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
+                "SELECT parent_asin, "
+                "bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) AS score "
+                "FROM products WHERE products MATCH ? ORDER BY score LIMIT ?",
                 (expression, top_k),
             ).fetchall()
-            recommendations = [{"parent_asin": str(row[0])} for row in rows]
+            sparse_results = [
+                RankedResult(parent_asin=str(row[0]), score=float(row[1]), rank=rank)
+                for rank, row in enumerate(rows, start=1)
+            ]
+            # Dense candidates will be supplied here when the dual-index branch lands.
+            fused_results, _decision = route_and_fuse(
+                user_message,
+                state.active_constraints,
+                sparse_results,
+                [],
+                limit=top_k,
+                sparse_higher_is_better=False,
+            )
+            recommendations = [
+                {"parent_asin": result.parent_asin} for result in fused_results
+            ]
         return {
             "message": "Here are the closest matches I found.",
             "ask_attribute": None,
