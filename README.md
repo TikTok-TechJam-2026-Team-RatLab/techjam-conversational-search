@@ -79,6 +79,17 @@ time, the agent refuses network downloads: if the query model is unavailable, it
 back to sparse retrieval. Generated vectors, manifests, model caches, and local dependencies
 must not be committed.
 
+With vectors generated from the official 50,000-product catalog, the hybrid configuration scored
+Hit Rate@10 `0.255`, MRR `0.125421`, MTTC `8.695`, and technical score `0.211226` across all 200
+public sessions. The sparse fallback scored `0.170487`, so hybrid retrieval improved the technical
+score by 23.9%. See `docs/phase1_retrieval.md` for the full comparison.
+
+Dense scoring is not yet a complete offline submission bundle. Before final submission, either
+the organizer setup must be allowed to download and cache the FastEmbed model, or the compatible
+model cache must be provisioned alongside `catalog_embeddings.npy` and
+`catalog_embeddings.json`. Without both the artifacts and cached query model, the agent
+deliberately falls back to sparse retrieval.
+
 Run all isolated tests with:
 
 ```bash
