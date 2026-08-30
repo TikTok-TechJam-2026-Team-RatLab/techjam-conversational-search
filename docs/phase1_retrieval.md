@@ -82,23 +82,36 @@ public sessions before selecting the sparse implementation:
 SQLite FTS therefore remains the sparse track; the BM25S dependency and its generated index are
 not carried into the clean branch.
 
-## Offline Submission Blocker
+## Offline Submission Status
 
 The measured hybrid score depends on two local resources that are intentionally absent from Git:
 
 1. The validated `catalog_embeddings.npy` and `catalog_embeddings.json` pair.
 2. The cached `BAAI/bge-small-en-v1.5` query model used by FastEmbed.
 
-The earlier `v1.0 Artifacts` release contains a compatible vector matrix but uses the legacy
-`asin_to_idx.json` contract instead of the validated manifest and does not provide the query-model
-cache. It is therefore not a complete artifact bundle for this branch.
+The current matrix and manifest are published in the
+[Phase 1 Clean Retrieval Artifacts v1 release](https://github.com/TikTok-TechJam-2026-Team-RatLab/techjam-conversational-search/releases/tag/phase1-clean-artifacts-v1).
+The uploaded manifest was independently checked against the expected schema, model, dimensions,
+catalog digest, and all 50,000 ordered ASINs. GitHub reports these artifact digests:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `catalog_embeddings.npy` | `56737d96a7e81f4523f8f5122d399180d272420adec8d624e9ac541e4b20eaa6` |
+| `catalog_embeddings.json` | `c86c96e733a757b7804bdf4e12c5325b34809787f365fb21ca498177ff5a3bb0` |
+
+The earlier `v1.0 Artifacts` release remains a legacy bundle: it uses `asin_to_idx.json` instead
+of the validated manifest and does not provide the query-model cache.
+
+Runtime evaluation has been successfully tested with network access disabled after the declared
+dependencies and query model were downloaded once. This proves the scoring path makes no runtime
+network request, but does not yet prove that a completely fresh machine can be prepared when
+setup-time network access is also unavailable.
 
 Before this draft is marked ready for final submission:
 
-- publish a versioned bundle containing the current vector matrix and manifest;
 - confirm whether organizer setup may download the declared model, or bundle an approved cache;
-- test from a clean environment with network access disabled; and
-- record artifact digests, peak memory, and evaluator latency in the final report.
+- test artifact and model provisioning from a clean environment under the confirmed policy; and
+- record peak memory and evaluator latency in the final report.
 
 Until those checks are complete, a missing or incompatible resource safely produces the evaluated
 `0.170487` sparse fallback rather than an invalid run or an attempted network download.

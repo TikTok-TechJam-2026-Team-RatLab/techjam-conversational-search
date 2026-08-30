@@ -90,6 +90,12 @@ model cache must be provisioned alongside `catalog_embeddings.npy` and
 `catalog_embeddings.json`. Without both the artifacts and cached query model, the agent
 deliberately falls back to sparse retrieval.
 
+The validated matrix and manifest are published in the
+[Phase 1 Clean Retrieval Artifacts v1 release](https://github.com/TikTok-TechJam-2026-Team-RatLab/techjam-conversational-search/releases/tag/phase1-clean-artifacts-v1).
+After the declared dependencies and query model were downloaded once, the full evaluator was
+successfully rerun with network access disabled. A fresh-machine test with no setup-time network
+access still requires either an approved bundled model cache or confirmation of organizer policy.
+
 Run all isolated tests with:
 
 ```bash
