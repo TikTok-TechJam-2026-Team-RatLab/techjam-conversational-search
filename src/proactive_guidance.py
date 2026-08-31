@@ -22,9 +22,9 @@ ALLOWED_ASK_ATTRIBUTES = frozenset({
     "other",
 })
 
-# Prefer concrete, easy-to-answer attributes when two attributes provide the
-# same amount of information. The information-gain calculation still decides
-# whenever one attribute separates the candidate pool more effectively.
+# Prefer concrete, easy-to-answer attributes when two attributes have the same
+# selection utility. The utility still decides whenever one attribute separates
+# the candidate pool more effectively.
 ATTRIBUTE_ORDER = (
     "material",
     "color",
@@ -252,7 +252,7 @@ def choose_clarification(
     force_clarification: bool = False,
     unavailable_attributes: Iterable[str] = (),
 ) -> GuidanceDecision:
-    """Choose the supported attribute with the highest expected information gain."""
+    """Choose the supported attribute with the highest catalog selection utility."""
 
     unavailable = {str(attribute).lower() for attribute in unavailable_attributes}
     if len(candidates) == 1:
