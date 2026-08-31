@@ -221,6 +221,20 @@ class SessionStateTest(unittest.TestCase):
         self.assertEqual(state.active_constraints["size"], ["size 3xl"])
         self.assertEqual(state.budget_ceiling(), 24.99)
 
+    def test_measurement_is_not_misclassified_as_budget(self) -> None:
+        self.agent.reset("session-a", {})
+
+        self.agent.respond(
+            "session-a",
+            "The band fits up to 8-inch wrist circumference.",
+            1,
+            3,
+        )
+
+        state = self.agent._sessions["session-a"]
+        self.assertIsNone(state.budget_ceiling())
+        self.assertNotIn("fits", state.active_constraints.get("brand", []))
+
     def test_multiple_values_for_same_attribute_are_retained(self) -> None:
         self.agent.reset("session-a", {})
 

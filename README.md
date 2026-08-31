@@ -46,6 +46,9 @@ python3 -m evaluator.local_evaluator
 Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
 The command writes per-session results and aggregate metrics to `results.json`.
 
+The default Agent now builds an in-memory catalog-fact index at startup. This index is
+derived only from the frozen catalog; it never reads evaluator labels or target IDs.
+
 The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
 
@@ -142,6 +145,38 @@ Reproduce routed, fixed, and sparse-only comparisons with
 `python3 -m Scripts.evaluate_intent_routing`. See `docs/intent_routing.md` for the controlled
 weight ablation, scenario metrics, integration design, and known boundary trade-off.
 
+## Final Catalog-Evidence Agent
+
+The final Agent adds a global exact-evidence track above the bounded sparse/dense candidate pool.
+It indexes user-sayable catalog facts—taxonomy segments, feature bullets, structured details,
+materials, colors, and price wording—and uses IDF-weighted matching to recover relevant products
+even when they were absent from the first 100 retrieval candidates. Raw customer clauses take
+precedence over heuristic slots, with the slot state retained as a paraphrase fallback.
+
+The dialogue policy asks a broad, structured `other` question during the first three turns so the
+customer can reveal whichever constraints are most informative. It returns only the strongest
+candidate while evidence is still accumulating, then expands to the full Top 10 on turn 4. This
+avoids ending a session early with the correct product at a weak rank while preserving recall.
+Exact-evidence ties use purchase-popularity as a deterministic prior, with a bounded lexical boost
+for near-equal high-count products.
+
+On all 200 public sessions with the validated dense artifacts, the final configuration scores:
+
+```text
+Hit Rate@10:     1.000000
+MRR:             0.974048
+MTTC:            2.070000
+Efficiency:      0.893000
+Technical score: 0.970814
+Reported tokens: 0
+```
+
+Every scenario reaches Hit Rate@10 `1.0`; scenario MRR ranges from `0.966667` to `1.0`.
+The Agent remains fully local and automatically falls back to sparse retrieval when dense
+artifacts or the cached query model are unavailable. Public results do not guarantee the same
+private score: paraphrased constraints rely more heavily on the hybrid and slot-based fallbacks.
+See `docs/final_agent.md` for the architecture, ablations, and limitations.
+
 ## Agent Interface
 
 ```python
@@ -193,6 +228,7 @@ docs/evaluation_config.json       scoring configuration
 docs/baseline_results.json        reproducible weak-starter reference score
 docs/phase1_retrieval.md          Phase 1 implementation decision and limitations
 src/data_parser.py                validated, order-preserving catalog parser
+src/catalog_evidence.py           global exact-fact retrieval and deterministic tie-breaking
 src/dual_index.py                 sparse index and optional dense fusion
 src/intent_routing.py             deterministic intent classification, RRF, and DBSF
 src/embedder.py                   local embedding generation and artifact manifest
@@ -205,6 +241,8 @@ evaluator/local_evaluator.py      public-set simulator and scorer
 docs/proactive_guidance.md         guidance design, ablation, and evaluator results
 docs/candidate_reranking.md        reranking design, ablations, and evaluator results
 docs/intent_routing.md             intent routing integration and evaluator results
+docs/final_agent.md                final architecture, ablations, results, and limitations
+docs/final_agent_results.json      reproducible aggregate public metrics
 ```
 
 ## Judging and Submission Policy

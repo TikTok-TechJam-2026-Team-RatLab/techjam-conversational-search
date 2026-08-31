@@ -12,16 +12,18 @@ COMMON_MATERIALS = frozenset({"cotton", "denim", "leather", "linen", "polyester"
 GENERIC_CATEGORIES = frozenset({"clothing", "clothing shoes jewelry", "women", "men"})
 VOCABULARY_STOPWORDS = frozenset({
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
-    "i", "imported", "in", "is", "it", "key", "machine", "me", "my", "of",
-    "on", "only", "or", "please", "some", "that", "the", "this", "to", "want",
-    "wash", "with", "would", "you",
+    "fit", "fits", "i", "imported", "in", "is", "it", "key", "machine", "me",
+    "my", "of", "on", "only", "or", "other", "please", "some", "stainless",
+    "that", "the", "this", "to", "want", "wash", "with", "would", "you",
 })
 TOKEN_RE = re.compile(r"\d+\.\d+|[a-z0-9]+(?:['-][a-z0-9]+)?", re.IGNORECASE)
 SIZE_RE = re.compile(r"\bsize\s*[:#-]?\s*(?P<value>[a-z0-9][a-z0-9./-]*)\b", re.IGNORECASE)
 BUDGET_RE = re.compile(
     r"(?:\b(?:budget(?:\s+(?:is|of))?(?:\s+(?:around|about|approximately))?|"
     r"under|below|less\s+than|up\s+to|max(?:imum)?)\s*:?\s*"
-    r"(?P<amount>\$?\d+(?:\.\d{1,2})?)\b)|(?P<currency>\$\d+(?:\.\d{1,2})?)",
+    r"(?P<amount>\$?\d+(?:\.\d{1,2})?)\b"
+    r"(?![-\s]*(?:cm|mm|inches?|inch|in|ft|feet|wrist|circumference)\b))|"
+    r"(?P<currency>\$\d+(?:\.\d{1,2})?)",
     re.IGNORECASE,
 )
 NAMED_OVERRIDE_RE = re.compile(

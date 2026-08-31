@@ -1,0 +1,50 @@
+{
+  "sample_count": 200,
+  "hit_rate_at_10": 1.0,
+  "mrr": 0.974048,
+  "mttc": 2.07,
+  "efficiency": 0.893,
+  "recommended_technical_score": 0.970814,
+  "reported_token_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "scenario_metrics": {
+    "boundary": {
+      "sample_count": 10,
+      "hit_rate_at_10": 1.0,
+      "mrr": 1.0,
+      "mttc": 2.5
+    },
+    "browsing": {
+      "sample_count": 80,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.966667,
+      "mttc": 1.9
+    },
+    "buying": {
+      "sample_count": 80,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.976786,
+      "mttc": 1.5875
+    },
+    "intent_override": {
+      "sample_count": 30,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.977778,
+      "mttc": 3.666667
+    }
+  },
+  "configuration": {
+    "catalog_evidence": true,
+    "broad_guidance": true,
+    "progressive_recommendations": true,
+    "early_recommendation_limit": 1,
+    "full_recommendation_turn": 4,
+    "intent_routing": true,
+    "rerank_candidate_pool_size": 100,
+    "dense_artifacts": true,
+    "external_api": false
+  }
+}
