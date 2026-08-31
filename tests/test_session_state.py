@@ -207,6 +207,20 @@ class SessionStateTest(unittest.TestCase):
         self.assertIn("red", state.retrieval_context())
         self.assertNotIn("blue", state.retrieval_context())
 
+    def test_decimal_budget_does_not_split_alphanumeric_size(self) -> None:
+        self.agent.reset("session-a", {})
+
+        self.agent.respond(
+            "session-a",
+            "I want shoes. Size 3XL. Budget around $24.99.",
+            1,
+            3,
+        )
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["size"], ["size 3xl"])
+        self.assertEqual(state.budget_ceiling(), 24.99)
+
     def test_multiple_values_for_same_attribute_are_retained(self) -> None:
         self.agent.reset("session-a", {})
 

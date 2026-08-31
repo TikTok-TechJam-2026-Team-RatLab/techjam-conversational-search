@@ -82,7 +82,7 @@ class CatalogItem:
     store: str
     dense_text: str
 
-    def sparse_fields(self) -> tuple[str, str, str, str, str, str, str]:
+    def sparse_fields(self) -> tuple[str, str, str, str, str, str, str, str]:
         return (
             self.parent_asin,
             _sparse_text(self.title),
@@ -91,6 +91,7 @@ class CatalogItem:
             _sparse_text(self.details),
             _sparse_text(self.store),
             _sparse_text(self.description),
+            "" if self.price is None else str(self.price),
         )
 
     def as_product(self) -> dict[str, object]:

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from src.data_parser import load_catalog
 from src.dual_index import DualIndex, QueryEmbedder
+from src.proactive_guidance import choose_clarification
 from starter.session_state import CatalogVocabulary, SessionState
 
 
@@ -52,11 +53,32 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
         state.add_message(user_message, turn)
-        results = self.retriever.search(state.retrieval_context(), top_k=top_k)
+        results = self.retriever.search(
+            state.retrieval_context(),
+            top_k=top_k,
+            max_price=state.budget_ceiling(),
+        )
         recommendations = [{"parent_asin": parent_asin} for parent_asin, _ in results]
+        candidates = [
+            self.catalog.items_by_asin[parent_asin]
+            for parent_asin, _ in results
+            if parent_asin in self.catalog.items_by_asin
+        ]
+        guidance = choose_clarification(
+            candidates,
+            candidate_scores=[score for _, score in results],
+            force_clarification=state.guidance_requested,
+            unavailable_attributes=(
+                set(state.active_constraints)
+                | state.asked_attributes
+                | state.declined_attributes
+            ),
+        )
+        if guidance.ask_attribute is not None:
+            state.record_question(guidance.ask_attribute)
         return {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": None,
+            "message": guidance.message,
+            "ask_attribute": guidance.ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }

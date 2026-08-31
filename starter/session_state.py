@@ -16,10 +16,11 @@ VOCABULARY_STOPWORDS = frozenset({
     "on", "only", "or", "please", "some", "that", "the", "this", "to", "want",
     "wash", "with", "would", "you",
 })
-TOKEN_RE = re.compile(r"[a-z0-9]+(?:['-][a-z0-9]+)?", re.IGNORECASE)
+TOKEN_RE = re.compile(r"\d+\.\d+|[a-z0-9]+(?:['-][a-z0-9]+)?", re.IGNORECASE)
 SIZE_RE = re.compile(r"\bsize\s*[:#-]?\s*(?P<value>[a-z0-9][a-z0-9./-]*)\b", re.IGNORECASE)
 BUDGET_RE = re.compile(
-    r"(?:\b(?:budget(?:\s+(?:is|of))?|under|below|less than|up to|max(?:imum)?)\s*:?[ ]*"
+    r"(?:\b(?:budget(?:\s+(?:is|of))?(?:\s+(?:around|about|approximately))?|"
+    r"under|below|less\s+than|up\s+to|max(?:imum)?)\s*:?\s*"
     r"(?P<amount>\$?\d+(?:\.\d{1,2})?)\b)|(?P<currency>\$\d+(?:\.\d{1,2})?)",
     re.IGNORECASE,
 )
@@ -48,6 +49,15 @@ CONSTRAINT_PREFIX_RE = re.compile(
 )
 BROWSING_FILLER_RE = re.compile(r",?\s*but i(?:'m| am) still exploring\b", re.IGNORECASE)
 NON_CONSTRAINT_PHRASES = ("ask me about", "not quite right", "please use your judgment")
+GUIDANCE_REQUEST_RE = re.compile(
+    r"\b(?:not quite right|not right yet|ask me about|ask me (?:a|one)\s+specific)\b",
+    re.IGNORECASE,
+)
+NO_PREFERENCE_RE = re.compile(
+    r"\b(?:don't|do not)\s+have\s+(?:an\s+)?(?:additional\s+)?preference\b|"
+    r"\bno\s+preference\b|\bplease\s+use\s+your\s+judgment\b",
+    re.IGNORECASE,
+)
 
 
 def _normalize(value: object) -> str:
@@ -136,12 +146,22 @@ class SessionState:
     active_constraints: dict[str, list[str]] = field(default_factory=dict)
     negative_constraints: dict[str, list[str]] = field(default_factory=dict)
     constraint_updated_at: dict[str, int] = field(default_factory=dict)
+    asked_attributes: set[str] = field(default_factory=set)
+    declined_attributes: set[str] = field(default_factory=set)
+    pending_ask_attribute: str | None = None
+    guidance_requested: bool = False
     _message_number: int = 0
 
     def add_message(self, message: str, turn: int | None = None) -> None:
         self.messages.append(message)
         self._message_number += 1
         update_turn = turn if turn is not None else self._message_number
+        self.guidance_requested = bool(GUIDANCE_REQUEST_RE.search(message))
+
+        if self.pending_ask_attribute is not None:
+            if NO_PREFERENCE_RE.search(message):
+                self.declined_attributes.add(self.pending_ask_attribute)
+            self.pending_ask_attribute = None
 
         removal = REMOVE_ATTRIBUTE_RE.search(message)
         if removal:
@@ -166,6 +186,13 @@ class SessionState:
             message = message.replace(span, " ")
         self._add_constraints(message, update_turn)
 
+    def record_question(self, attribute: str) -> None:
+        normalized = attribute.strip().lower()
+        if not normalized:
+            return
+        self.asked_attributes.add(normalized)
+        self.pending_ask_attribute = normalized
+
     def _parts(self, constraint: str) -> list[tuple[str, str]]:
         has_category = bool(re.search(r"\b(?:looking for|need|want)\b", constraint, re.IGNORECASE))
         remainder = constraint
@@ -179,9 +206,12 @@ class SessionState:
         if size_matches:
             recognized.extend(("size", _normalize(value)) for value in size_matches)
             remainder = SIZE_RE.sub(" ", remainder)
-        budget_matches = [match.group(0) for match in BUDGET_RE.finditer(remainder)]
+        budget_matches = list(BUDGET_RE.finditer(remainder))
         if budget_matches:
-            recognized.extend(("budget", _normalize(value)) for value in budget_matches)
+            for match in budget_matches:
+                raw_amount = (match.group("amount") or match.group("currency")).lstrip("$")
+                float(raw_amount)  # Validate before retaining the normalized customer wording.
+                recognized.append(("budget", _normalize(match.group(0))))
             remainder = BUDGET_RE.sub(" ", remainder)
 
         remainder = re.sub(r"\s+", " ", remainder).strip(" ,:!?")
@@ -203,7 +233,7 @@ class SessionState:
 
     def _add_constraints(self, message: str, turn: int) -> None:
         parsed: dict[str, list[str]] = {}
-        for clause in re.split(r"[.;]", message):
+        for clause in re.split(r";|(?<!\d)\.(?!\d)", message):
             constraint = CONSTRAINT_PREFIX_RE.sub("", clause).strip(" ,:!?\t\r\n")
             constraint = re.sub(r"^(?:and|but)\s+", "", constraint, flags=re.IGNORECASE)
             lowered = constraint.lower()
@@ -274,3 +304,13 @@ class SessionState:
             for values in self.active_constraints.values()
             for value in values
         )
+
+    def budget_ceiling(self) -> float | None:
+        """Return the active maximum price, if the customer supplied one."""
+
+        ceilings: list[float] = []
+        for value in self.active_constraints.get("budget", []):
+            match = re.search(r"\d+(?:\.\d+)?", value)
+            if match:
+                ceilings.append(float(match.group(0)))
+        return min(ceilings) if ceilings else None

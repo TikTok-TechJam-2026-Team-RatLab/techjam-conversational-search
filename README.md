@@ -163,9 +163,11 @@ docs/phase1_retrieval.md          Phase 1 implementation decision and limitation
 src/data_parser.py                validated, order-preserving catalog parser
 src/dual_index.py                 sparse index and optional dense fusion
 src/embedder.py                   local embedding generation and artifact manifest
+src/proactive_guidance.py         deterministic clarification-question selection
 Scripts/generate_embeddings.py    reproducible embedding build command
 starter/agent.py                  editable weak starter
 evaluator/local_evaluator.py      public-set simulator and scorer
+docs/proactive_guidance.md         guidance design, ablation, and evaluator results
 ```
 
 ## Judging and Submission Policy

@@ -80,16 +80,17 @@ class DualIndex:
         cursor.execute(
             "CREATE VIRTUAL TABLE products USING fts5("
             "parent_asin UNINDEXED, title, categories, features, details, store, description, "
+            "price UNINDEXED, "
             "tokenize='unicode61 remove_diacritics 2')"
         )
-        batch: list[tuple[str, str, str, str, str, str, str]] = []
+        batch: list[tuple[str, str, str, str, str, str, str, str]] = []
         for item in self.catalog.items:
             batch.append(item.sparse_fields())
             if len(batch) >= 1000:
-                cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+                cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
                 batch.clear()
         if batch:
-            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
 
     def _load_dense_artifacts_if_present(self) -> None:
@@ -152,18 +153,34 @@ class DualIndex:
         self._dense_matrix = matrix
         self._dense_model_name = model_name
 
-    def search_sparse(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+    def search_sparse(
+        self,
+        query: str,
+        top_k: int = 10,
+        *,
+        max_price: float | None = None,
+    ) -> list[tuple[str, float]]:
         if top_k <= 0:
             return []
         unique_terms = list(dict.fromkeys(_terms(query)))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
             return []
-        rows = self.connection.execute(
-            "SELECT parent_asin, bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) "
-            "FROM products WHERE products MATCH ? ORDER BY 2 LIMIT ?",
-            (expression, min(top_k, len(self.catalog.asin_list))),
-        ).fetchall()
+        limit = min(top_k, len(self.catalog.asin_list))
+        score_expression = "bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0, 0.0)"
+        if max_price is None:
+            rows = self.connection.execute(
+                f"SELECT parent_asin, {score_expression} "
+                "FROM products WHERE products MATCH ? ORDER BY 2 LIMIT ?",
+                (expression, limit),
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                f"SELECT parent_asin, {score_expression} "
+                "FROM products WHERE products MATCH ? "
+                "AND (price = '' OR CAST(price AS REAL) <= ?) ORDER BY 2 LIMIT ?",
+                (expression, max_price, limit),
+            ).fetchall()
         return [(str(parent_asin), float(score)) for parent_asin, score in rows]
 
     def _get_query_embedder(self) -> QueryEmbedder | None:
@@ -193,6 +210,8 @@ class DualIndex:
         self,
         query_vector: object,
         top_k: int = 10,
+        *,
+        max_price: float | None = None,
     ) -> list[tuple[str, float]]:
         if self._dense_matrix is None or self._np is None or top_k <= 0:
             return []
@@ -210,34 +229,62 @@ class DualIndex:
         vector = vector / norm
         scores = np.asarray(self._dense_matrix @ vector)
 
-        k = min(top_k, scores.size)
-        if k == scores.size:
-            ranked_indices = np.argsort(-scores)
+        eligible_indices = np.arange(scores.size)
+        if max_price is not None:
+            eligible_indices = np.asarray([
+                index
+                for index, item in enumerate(self.catalog.items)
+                if item.price is None or item.price <= max_price
+            ])
+        if eligible_indices.size == 0:
+            return []
+
+        eligible_scores = scores[eligible_indices]
+        k = min(top_k, eligible_scores.size)
+        if k == eligible_scores.size:
+            ranked_local_indices = np.argsort(-eligible_scores)
         else:
-            candidates = np.argpartition(-scores, k - 1)[:k]
-            ranked_indices = candidates[np.argsort(-scores[candidates])]
+            candidates = np.argpartition(-eligible_scores, k - 1)[:k]
+            ranked_local_indices = candidates[np.argsort(-eligible_scores[candidates])]
+        ranked_indices = eligible_indices[ranked_local_indices]
         return [
             (self.catalog.asin_list[int(index)], float(scores[int(index)]))
             for index in ranked_indices[:k]
         ]
 
-    def search_dense(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+    def search_dense(
+        self,
+        query: str,
+        top_k: int = 10,
+        *,
+        max_price: float | None = None,
+    ) -> list[tuple[str, float]]:
         if not query.strip() or self._dense_matrix is None:
             return []
         embedder = self._get_query_embedder()
         if embedder is None:
             return []
-        return self.search_dense_vector(embedder.embed_query(query), top_k=top_k)
+        return self.search_dense_vector(
+            embedder.embed_query(query),
+            top_k=top_k,
+            max_price=max_price,
+        )
 
-    def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        *,
+        max_price: float | None = None,
+    ) -> list[tuple[str, float]]:
         if top_k <= 0:
             return []
         candidate_count = min(max(top_k * 5, top_k), len(self.catalog.asin_list))
-        sparse = self.search_sparse(query, top_k=candidate_count)
+        sparse = self.search_sparse(query, top_k=candidate_count, max_price=max_price)
         if self._dense_matrix is None:
             return sparse[:top_k]
 
-        dense = self.search_dense(query, top_k=candidate_count)
+        dense = self.search_dense(query, top_k=candidate_count, max_price=max_price)
         if not dense:
             return sparse[:top_k]
 
