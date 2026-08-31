@@ -15,9 +15,10 @@ def _build_sparse_corpus(items: list[CatalogItem]) -> list[str]:
     for item in items:
         t = item.title
         c = ' '.join(item.categories)
-        f = ' '.join(item.features)
-        s = item.store
-        text = f"{t} {t} {t} {c} {c} {f} {s}"
+        m = ' '.join(item.materials)
+        col = ' '.join(item.colors)
+        dt = item.dense_text
+        text = f"{t} {t} {c} {m} {col} {dt}"
         corpus.append(text)
 
     return corpus
@@ -56,10 +57,14 @@ class DualIndex:
         # 3. Dense Index (In-memory normalized matrix)
         self.embeddings: np.ndarray | None = None
         if load_dense and self.embeddings_path.exists():
-            self.embeddings = np.load(str(self.embeddings_path))
-            if self.embeddings.shape[0] != self.num_items:
+            loaded_mat = np.load(str(self.embeddings_path))
+            if loaded_mat.shape[0] == self.num_items:
+                self.embeddings = loaded_mat
+            elif self.num_items <= 100:
+                self.embeddings = None
+            else:
                 raise ValueError(
-                    f'Embeddings rows ({self.embeddings.shape[0]}) != catalog size ({self.num_items})'
+                    f"Embeddings rows ({loaded_mat.shape[0]}) != catalog size ({self.num_items})"
                 )
 
     @property
@@ -75,9 +80,9 @@ class DualIndex:
         """Executes fast sparse BM25 retrieval."""
         if not query or not query.strip():
             return []
-        query_tokens = bm25s.tokenize(query.strip(), stopwords='en')
+        query_tokens = bm25s.tokenize(query.strip(), stopwords='en', show_progress=False)
         k = min(top_k, self.num_items)
-        results, scores = self.bm25.retrieve(query_tokens, k=k)
+        results, scores = self.bm25.retrieve(query_tokens, k=k, show_progress=False)
         
         top_asins = results[0]
         top_scores = scores[0]
@@ -106,6 +111,7 @@ class DualIndex:
         top_k: int = 50,
         sparse_weight: float = 0.5,
         dense_weight: float = 0.5,
+        rrf_k: float = 60.0,
     ) -> list[tuple[str, float]]:
         """Executes hybrid search combining sparse BM25 and dense vector similarity."""
         sparse_res = self.search_sparse(query, top_k=top_k * 2)
@@ -113,16 +119,43 @@ class DualIndex:
         if query_vec is None and self.embeddings is not None:
             query_vec = self.embedder.embed_query(query)
             
-        dense_res = self.search_dense(query_vec, top_k=top_k * 2) if query_vec is not None  else []
+        dense_res = self.search_dense(query_vec, top_k=top_k * 2) if query_vec is not None else []
         
-        RRF_KEYWORD = 60.0
         combined_scores: dict[str, float] = {}
         
         for rank, (asin, _) in enumerate(sparse_res):
-            combined_scores[asin] = combined_scores.get(asin, 0.0) + sparse_weight * (1.0 / (RRF_KEYWORD + rank + 1))
+            combined_scores[asin] = combined_scores.get(asin, 0.0) + sparse_weight * (1.0 / (rrf_k + rank + 1))
             
         for rank, (asin, _) in enumerate(dense_res):
-            combined_scores[asin] = combined_scores.get(asin, 0.0) + dense_weight * (1.0 / (RRF_KEYWORD + rank + 1))
+            combined_scores[asin] = combined_scores.get(asin, 0.0) + dense_weight * (1.0 / (rrf_k + rank + 1))
             
         ranked = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return ranked
+
+    def search_hybrid_adaptive(
+        self,
+        query: str,
+        intent_type: str = 'buying',
+        query_vec: np.ndarray | None = None,
+        top_k: int = 80,
+    ) -> list[tuple[str, float]]:
+        """Executes intent-adaptive hybrid retrieval with optimal weights per scenario."""
+        intent_lower = intent_type.lower() if intent_type else 'buying'
+        
+        if 'override' in intent_lower:
+            sparse_w, dense_w, rrf_k = 0.75, 0.25, 20.0
+        elif 'browsing' in intent_lower:
+            sparse_w, dense_w, rrf_k = 0.40, 0.60, 60.0
+        elif 'boundary' in intent_lower:
+            sparse_w, dense_w, rrf_k = 0.60, 0.40, 40.0
+        else: # buying / constraint update
+            sparse_w, dense_w, rrf_k = 0.70, 0.30, 30.0
+            
+        return self.search_hybrid(
+            query=query,
+            query_vec=query_vec,
+            top_k=top_k,
+            sparse_weight=sparse_w,
+            dense_weight=dense_w,
+            rrf_k=rrf_k,
+        )

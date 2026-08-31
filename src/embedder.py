@@ -18,16 +18,23 @@ class Embedder:
         self.model_name = model_name
         self._model = TextEmbedding(model_name=model_name, threads=threads, local_files_only=True)
         self.embedding_dim = 384 if ('small' in model_name or 'MiniLM' in model_name or 'xs' in model_name) else 768
+        self._query_cache: dict[str, np.ndarray] = {}
 
     def embed_query(self, query: str) -> np.ndarray:
-        """Encodes a single search query into an L2-normalized 1D float32 numpy vector."""
+        """Encodes a single search query into an L2-normalized 1D float32 numpy vector with in-memory caching."""
         if not query or not query.strip():
             return np.zeros(self.embedding_dim, dtype=np.float32)
-        vec = next(self._model.embed([query.strip()]))
+        q_clean = query.strip()
+        if q_clean in self._query_cache:
+            return self._query_cache[q_clean]
+        
+        vec = next(self._model.embed([q_clean]))
         vec = np.asarray(vec, dtype=np.float32)
         norm = float(np.linalg.norm(vec))
         if norm > 1e-9:
             vec = vec / norm
+        if len(self._query_cache) < 10000:
+            self._query_cache[q_clean] = vec
         return vec
 
     def embed_batch(

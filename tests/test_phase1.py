@@ -6,7 +6,12 @@ from pathlib import Path
 
 _root = str(Path(__file__).resolve().parent.parent)
 _libs = str(Path(__file__).resolve().parent.parent / "libs")
-sys.path = [_libs, _root] + [p for p in sys.path if "Python313" not in p and p not in (_libs, _root)]
+
+if sys.version_info[:2] == (3, 12):
+    sys.path = [_libs, _root] + [p for p in sys.path if "Python313" not in p and "Roaming" not in p and p not in (_libs, _root)]
+else:
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
 
 import numpy as np
 
