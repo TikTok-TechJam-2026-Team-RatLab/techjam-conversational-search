@@ -234,6 +234,9 @@ class AgentRerankingIntegrationTest(unittest.TestCase):
             enable_intent_routing=False,
             enable_reranking=True,
             rerank_candidate_pool_size=50,
+            enable_catalog_evidence=False,
+            enable_broad_guidance=False,
+            progressive_recommendations=False,
         )
         retriever = RecordingRetriever(self.results)
         agent.retriever = retriever
@@ -249,6 +252,9 @@ class AgentRerankingIntegrationTest(unittest.TestCase):
             self.catalog_path,
             enable_intent_routing=False,
             enable_reranking=False,
+            enable_catalog_evidence=False,
+            enable_broad_guidance=False,
+            progressive_recommendations=False,
         )
         retriever = RecordingRetriever(self.results)
         agent.retriever = retriever
@@ -272,6 +278,9 @@ class AgentRerankingIntegrationTest(unittest.TestCase):
             enable_intent_routing=True,
             enable_reranking=True,
             rerank_candidate_pool_size=50,
+            enable_catalog_evidence=False,
+            enable_broad_guidance=False,
+            progressive_recommendations=False,
         )
         retriever = RecordingRoutedRetriever(self.results)
         agent.retriever = retriever

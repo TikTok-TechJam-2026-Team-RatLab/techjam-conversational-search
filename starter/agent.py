@@ -1,12 +1,20 @@
 from __future__ import annotations
 from pathlib import Path
 
+from src.catalog_evidence import CatalogEvidenceIndex, EvidenceRanking
 from src.candidate_reranker import rerank_candidates
 from src.data_parser import load_catalog
 from src.dual_index import DualIndex, QueryEmbedder
 from src.intent_routing import DEFAULT_ROUTING_CONFIG, IntentDecision, RoutingConfig
-from src.proactive_guidance import choose_clarification
+from src.proactive_guidance import GuidanceDecision, choose_clarification
 from starter.session_state import CatalogVocabulary, SessionState
+
+
+BROAD_CLARIFICATION_MESSAGES = (
+    "Which detail matters most—for example material, color, fit, brand, or a must-have feature?",
+    "Is there another must-have detail that would help me narrow this down?",
+    "One last detail: is there any other feature or preference I should prioritize?",
+)
 
 
 class Agent:
@@ -22,14 +30,28 @@ class Agent:
         routing_config: RoutingConfig = DEFAULT_ROUTING_CONFIG,
         enable_reranking: bool = True,
         rerank_candidate_pool_size: int = 100,
+        enable_catalog_evidence: bool = True,
+        enable_broad_guidance: bool = True,
+        progressive_recommendations: bool = True,
+        full_recommendation_turn: int = 4,
+        early_recommendation_limit: int = 1,
     ) -> None:
         if rerank_candidate_pool_size <= 0:
             raise ValueError("rerank_candidate_pool_size must be positive")
+        if full_recommendation_turn < 1:
+            raise ValueError("full_recommendation_turn must be positive")
+        if early_recommendation_limit <= 0:
+            raise ValueError("early_recommendation_limit must be positive")
         self.catalog_path = Path(catalog_path)
         self.enable_intent_routing = enable_intent_routing
         self.routing_config = routing_config
         self.enable_reranking = enable_reranking
         self.rerank_candidate_pool_size = rerank_candidate_pool_size
+        self.enable_catalog_evidence = enable_catalog_evidence
+        self.enable_broad_guidance = enable_broad_guidance
+        self.progressive_recommendations = progressive_recommendations
+        self.full_recommendation_turn = full_recommendation_turn
+        self.early_recommendation_limit = early_recommendation_limit
         artifact_directory = self.catalog_path.parent
         if embeddings_path is None:
             embeddings_path = artifact_directory / "catalog_embeddings.npy"
@@ -41,6 +63,9 @@ class Agent:
         self.vocabulary = CatalogVocabulary()
         for item in self.catalog.items:
             self.vocabulary.add_product(item.as_product())
+        self.evidence_index = (
+            CatalogEvidenceIndex(self.catalog) if self.enable_catalog_evidence else None
+        )
         self.retriever = DualIndex(
             self.catalog,
             embeddings_path=embeddings_path,
@@ -92,34 +117,67 @@ class Agent:
                 max_price=state.budget_ceiling(),
             )
         if self.enable_reranking:
-            results = rerank_candidates(
+            base_results = rerank_candidates(
                 retrieval_results,
                 self.catalog.items_by_asin,
                 active_constraints=state.active_constraints,
                 negative_constraints=state.negative_constraints,
                 constraint_updated_at=state.constraint_updated_at,
-                top_k=top_k,
+                top_k=candidate_limit,
             )
         else:
-            results = retrieval_results[:top_k]
-        recommendations = [{"parent_asin": parent_asin} for parent_asin, _ in results]
+            base_results = retrieval_results[:candidate_limit]
+
+        evidence_ranking = EvidenceRanking((), ())
+        if self.evidence_index is not None:
+            evidence_ranking = self.evidence_index.rank(
+                base_results,
+                messages=state.messages,
+                active_constraints=state.active_constraints,
+                negative_constraints=state.negative_constraints,
+                limit=max(candidate_limit, top_k),
+            )
+            ranked_results = list(evidence_ranking.results)
+        else:
+            ranked_results = list(base_results)
+        results = ranked_results[:top_k]
+
+        recommendation_results = results
+        if (
+            self.progressive_recommendations
+            and turn < self.full_recommendation_turn
+            and evidence_ranking.has_catalog_evidence
+        ):
+            recommendation_results = results[: min(self.early_recommendation_limit, top_k)]
+        recommendations = [
+            {"parent_asin": parent_asin}
+            for parent_asin, _ in recommendation_results
+        ]
         candidates = [
             self.catalog.items_by_asin[parent_asin]
             for parent_asin, _ in results
             if parent_asin in self.catalog.items_by_asin
         ]
-        guidance = choose_clarification(
-            candidates,
-            # Preserve the established retrieval-confidence policy while using the
-            # reranked products to choose the most useful question.
-            candidate_scores=[score for _, score in retrieval_results[:top_k]],
-            force_clarification=state.guidance_requested,
-            unavailable_attributes=(
-                set(state.active_constraints)
-                | state.asked_attributes
-                | state.declined_attributes
-            ),
-        )
+        if self.enable_broad_guidance and turn < self.full_recommendation_turn:
+            guidance = GuidanceDecision(
+                "other",
+                BROAD_CLARIFICATION_MESSAGES[
+                    min(turn - 1, len(BROAD_CLARIFICATION_MESSAGES) - 1)
+                ],
+            )
+        else:
+            guidance = choose_clarification(
+                candidates,
+                # Preserve the established retrieval-confidence policy while using the
+                # reranked products to choose the most useful question.
+                candidate_scores=[score for _, score in results],
+                force_clarification=state.guidance_requested,
+                unavailable_attributes=(
+                    set(state.active_constraints)
+                    | state.asked_attributes
+                    | state.declined_attributes
+                ),
+            )
         if guidance.ask_attribute is not None:
             state.record_question(guidance.ask_attribute)
         return {
