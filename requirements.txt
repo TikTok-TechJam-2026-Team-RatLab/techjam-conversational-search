@@ -1,0 +1,4 @@
+# Optional local semantic-retrieval dependencies.
+# The agent retains its standard-library SQLite FTS fallback when dense artifacts are absent.
+fastembed==0.8.0
+numpy==2.2.6

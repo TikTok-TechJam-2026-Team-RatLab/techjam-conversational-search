@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from starter.intent_routing import (
+from src.intent_routing import (
     RankedResult,
+    RoutingConfig,
     classify_intent,
     distribution_based_score_fusion,
     reciprocal_rank_fusion,
@@ -29,6 +30,25 @@ class IntentRouterTest(unittest.TestCase):
         self.assertEqual(decision.intent, "browsing")
         self.assertIn("message:exploration_phrase", decision.signals)
         self.assertIn("message:generic_use_case", decision.signals)
+
+    def test_explicit_exploration_overrides_generic_shopping_language(self) -> None:
+        decision = classify_intent(
+            "I'm looking for shoes, but I'm still exploring.",
+            {"category": ["shoes"]},
+            known_categories={"shoes"},
+        )
+
+        self.assertEqual(decision.intent, "browsing")
+        self.assertIn("message:explicit_browsing", decision.signals)
+
+    def test_explicit_override_to_concrete_requirement_routes_to_buying(self) -> None:
+        decision = classify_intent(
+            "Actually, ignore my earlier preference. What I need is: leather.",
+            {"category": ["boots"], "material": ["leather"]},
+        )
+
+        self.assertEqual(decision.intent, "buying")
+        self.assertIn("message:key_requirement", decision.signals)
 
     def test_accumulated_state_keeps_short_follow_up_in_buying(self) -> None:
         decision = classify_intent(
@@ -70,7 +90,7 @@ class ReciprocalRankFusionTest(unittest.TestCase):
         fused = reciprocal_rank_fusion(sparse, [], k=60)
 
         self.assertEqual(len(fused), 1)
-        self.assertAlmostEqual(fused[0].fused_score, 1 / 61)
+        self.assertAlmostEqual(fused[0].fused_score, 0.7 / 61)
 
     def test_empty_source_is_supported(self) -> None:
         fused = reciprocal_rank_fusion([], [result("A", 0.9, 1)])
@@ -89,12 +109,19 @@ class DistributionBasedFusionTest(unittest.TestCase):
 
         self.assertEqual(fused[0].parent_asin, "B")
 
-    def test_zero_variance_does_not_divide_by_zero(self) -> None:
+    def test_zero_variance_uses_source_rank_before_asin_for_ties(self) -> None:
         sparse = [result("B", 1.0, 2), result("A", 1.0, 1)]
 
         fused = distribution_based_score_fusion(sparse, [])
 
         self.assertEqual([item.parent_asin for item in fused], ["A", "B"])
+
+    def test_tied_scores_preserve_better_source_rank_before_asin(self) -> None:
+        sparse = [result("Z", 1.0, 1), result("A", 1.0, 2)]
+
+        fused = distribution_based_score_fusion(sparse, [], sparse_weight=1.0)
+
+        self.assertEqual([item.parent_asin for item in fused], ["Z", "A"])
 
     def test_distance_scores_can_be_marked_lower_is_better(self) -> None:
         dense = [result("CLOSE", 0.1, 1), result("FAR", 0.9, 2)]
@@ -128,6 +155,21 @@ class RouteAndFuseTest(unittest.TestCase):
 
         self.assertEqual(decision.intent, "browsing")
         self.assertEqual(len(fused), 1)
+
+    def test_sparse_only_fallback_preserves_validated_source_order_and_scores(self) -> None:
+        sparse = [result("Z", -10.0, 1), result("A", -5.0, 2)]
+
+        fused, decision = route_and_fuse(
+            "I'm still exploring.", {}, sparse, [], limit=2
+        )
+
+        self.assertEqual(decision.intent, "browsing")
+        self.assertEqual([item.parent_asin for item in fused], ["Z", "A"])
+        self.assertEqual([item.fused_score for item in fused], [-10.0, -5.0])
+
+    def test_routing_config_rejects_unusable_weight_sets(self) -> None:
+        with self.assertRaisesRegex(ValueError, "buying fusion"):
+            RoutingConfig(buying_sparse_weight=0.0, buying_dense_weight=0.0)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,13 @@ class SessionStateTest(unittest.TestCase):
         self.temp_directory = tempfile.TemporaryDirectory()
         catalog_path = Path(self.temp_directory.name) / "catalog.jsonl"
         products = [
-            {"parent_asin": "BLUE_SHOES", "title": "Blue running shoes"},
+            {
+                "parent_asin": "BLUE_SHOES",
+                "title": "Blue running shoes",
+                "categories": ["Clothing, Shoes"],
+                "store": "Northwind",
+                "details": {"Color": "Cerulean", "Material": "Bamboo"},
+            },
             {"parent_asin": "RED_SHOES", "title": "Red running shoes"},
             {"parent_asin": "BLUE_SHIRT", "title": "Blue cotton shirt"},
         ]
@@ -35,6 +41,18 @@ class SessionStateTest(unittest.TestCase):
         self.assertEqual(
             self.agent._sessions["session-a"].messages,
             ["I want shoes", "Preferably blue"],
+        )
+
+    def test_custom_catalog_uses_sibling_optional_artifacts(self) -> None:
+        expected_directory = Path(self.temp_directory.name)
+
+        self.assertEqual(
+            self.agent.retriever.embeddings_path,
+            expected_directory / "catalog_embeddings.npy",
+        )
+        self.assertEqual(
+            self.agent.retriever.manifest_path,
+            expected_directory / "catalog_embeddings.json",
         )
 
     def test_sessions_are_isolated(self) -> None:
@@ -77,7 +95,7 @@ class SessionStateTest(unittest.TestCase):
 
         self.assertEqual(
             self.agent._sessions["session-a"].active_constraints,
-            {"category": ["I'm looking for shoes"], "color": ["blue"]},
+            {"category": ["i'm looking for shoes"], "color": ["blue"]},
         )
         self.assertEqual(response["recommendations"][0]["parent_asin"], "BLUE_SHOES")
 
@@ -89,9 +107,9 @@ class SessionStateTest(unittest.TestCase):
         self.assertEqual(
             self.agent._sessions["session-a"].active_constraints,
             {
-                "category": ["I'm looking for shoes"],
+                "category": ["i'm looking for shoes"],
                 "color": ["red"],
-                "size": ["Size 10"],
+                "size": ["size 10"],
             },
         )
         context = self.agent._sessions["session-a"].retrieval_context().lower()
@@ -127,11 +145,144 @@ class SessionStateTest(unittest.TestCase):
 
         self.assertEqual(
             self.agent._sessions["session-a"].active_constraints,
-            {"category": ["I'm looking for dresses"]},
+            {"category": ["i'm looking for dresses"]},
         )
         context = self.agent._sessions["session-a"].retrieval_context()
         self.assertIn("dresses", context)
         self.assertNotIn("exploring", context)
+
+    def test_vocabulary_is_derived_from_structured_catalog_fields(self) -> None:
+        vocabulary = self.agent.vocabulary
+
+        self.assertIn("shoes", vocabulary.categories)
+        self.assertIn("northwind", vocabulary.brands)
+        self.assertIn("cerulean", vocabulary.colors)
+        self.assertIn("bamboo", vocabulary.materials)
+
+        self.agent.reset("session-a", {})
+        self.agent.respond(
+            "session-a",
+            "I want Northwind cerulean bamboo shoes.",
+            1,
+            3,
+        )
+        constraints = self.agent._sessions["session-a"].active_constraints
+        self.assertEqual(constraints["brand"], ["northwind"])
+        self.assertEqual(constraints["color"], ["cerulean"])
+        self.assertEqual(constraints["material"], ["bamboo"])
+        self.assertIn("shoes", constraints["category"][0])
+
+    def test_negation_removes_matching_active_constraints(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want red leather shoes. Size 10.", 1, 3)
+        self.agent.respond("session-a", "Not red. No leather.", 2, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertNotIn("color", state.active_constraints)
+        self.assertNotIn("material", state.active_constraints)
+        self.assertEqual(state.negative_constraints["color"], ["red"])
+        self.assertEqual(state.negative_constraints["material"], ["leather"])
+        self.assertIn("size 10", state.retrieval_context())
+
+    def test_explicit_attribute_removal(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want Northwind blue shoes.", 1, 3)
+        self.agent.respond("session-a", "I no longer care about the brand.", 2, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertNotIn("brand", state.active_constraints)
+        self.assertIn("blue", state.retrieval_context())
+        self.assertIn("shoes", state.retrieval_context())
+
+    def test_newer_conflict_replaces_value_and_has_recency_priority(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want blue shoes. Size 10. Under $80.", 1, 3)
+        self.agent.respond("session-a", "Red instead.", 4, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["color"], ["red"])
+        self.assertEqual(state.active_constraints["size"], ["size 10"])
+        self.assertIn("under 80", state.active_constraints["budget"][0])
+        self.assertEqual(state.constraint_updated_at["color"], 4)
+        self.assertIn("red", state.retrieval_context())
+        self.assertNotIn("blue", state.retrieval_context())
+
+    def test_decimal_budget_does_not_split_alphanumeric_size(self) -> None:
+        self.agent.reset("session-a", {})
+
+        self.agent.respond(
+            "session-a",
+            "I want shoes. Size 3XL. Budget around $24.99.",
+            1,
+            3,
+        )
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["size"], ["size 3xl"])
+        self.assertEqual(state.budget_ceiling(), 24.99)
+
+    def test_multiple_values_for_same_attribute_are_retained(self) -> None:
+        self.agent.reset("session-a", {})
+
+        self.agent.respond("session-a", "I want red or blue shoes.", 1, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["color"], ["red", "blue"])
+        self.assertIn("shoes", state.active_constraints["category"][0])
+
+    def test_ordinary_constraints_add_but_explicit_override_replaces(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want blue shoes. Size 10.", 1, 3)
+        self.agent.respond("session-a", "Cotton.", 2, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["color"], ["blue"])
+        self.assertEqual(state.active_constraints["material"], ["cotton"])
+        self.assertEqual(state.active_constraints["size"], ["size 10"])
+
+        self.agent.respond("session-a", "Actually, replace blue with red.", 3, 3)
+        self.assertEqual(state.active_constraints["color"], ["red"])
+        self.assertEqual(state.active_constraints["material"], ["cotton"])
+        self.assertEqual(state.active_constraints["size"], ["size 10"])
+
+    def test_category_word_in_long_requirement_does_not_replace_category(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want shoes.", 1, 3)
+        self.agent.respond(
+            "session-a",
+            "Waterproof shoes with strong arch support for hiking.",
+            2,
+            3,
+        )
+
+        state = self.agent._sessions["session-a"]
+        self.assertEqual(state.active_constraints["category"], ["i want shoes"])
+        self.assertIn("waterproof shoes with strong arch support for hiking", state.active_constraints["other"])
+
+    def test_removal_and_new_constraint_in_same_message(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want Northwind blue shoes.", 1, 3)
+        self.agent.respond(
+            "session-a",
+            "I no longer care about the brand, but make it red.",
+            2,
+            3,
+        )
+
+        state = self.agent._sessions["session-a"]
+        self.assertNotIn("brand", state.active_constraints)
+        self.assertEqual(state.active_constraints["color"], ["red"])
+        self.assertIn("shoes", state.retrieval_context())
+
+    def test_negation_and_positive_constraint_in_same_message(self) -> None:
+        self.agent.reset("session-a", {})
+        self.agent.respond("session-a", "I want red shoes.", 1, 3)
+        self.agent.respond("session-a", "Not red and size 10.", 2, 3)
+
+        state = self.agent._sessions["session-a"]
+        self.assertNotIn("color", state.active_constraints)
+        self.assertEqual(state.negative_constraints["color"], ["red"])
+        self.assertEqual(state.active_constraints["size"], ["size 10"])
 
     def test_respond_before_reset_raises_error(self) -> None:
         with self.assertRaises(RuntimeError):

@@ -1,81 +1,59 @@
 from __future__ import annotations
-from starter.intent_routing import RankedResult, route_and_fuse
-from starter.session_state import SessionState
-
-import json
-import re
-import sqlite3
 from pathlib import Path
 
-
-TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
-STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
-    "i", "in", "is", "it", "me", "my", "of", "on", "or", "please", "some",
-    "that", "the", "this", "to", "want", "with", "would", "you", "looking",
-}
-
-
-def _text(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        return " ".join(f"{key} {item}" for key, item in value.items())
-    if isinstance(value, list):
-        return " ".join(str(item) for item in value)
-    return str(value)
-
-
-def _terms(text: str) -> list[str]:
-    return [
-        token.lower()
-        for token in TOKEN_RE.findall(text)
-        if len(token) > 1 and token.lower() not in STOPWORDS
-    ]
+from src.candidate_reranker import rerank_candidates
+from src.data_parser import load_catalog
+from src.dual_index import DualIndex, QueryEmbedder
+from src.intent_routing import DEFAULT_ROUTING_CONFIG, IntentDecision, RoutingConfig
+from src.proactive_guidance import choose_clarification
+from starter.session_state import CatalogVocabulary, SessionState
 
 
 class Agent:
-    """BM25 retrieval baseline with per-session dialogue state and no LLM dependency."""
+    """State-aware routed retrieval, deterministic reranking, and guidance."""
 
-    def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path = "data/catalog.jsonl",
+        embeddings_path: str | Path | None = None,
+        manifest_path: str | Path | None = None,
+        query_embedder: QueryEmbedder | None = None,
+        enable_intent_routing: bool = True,
+        routing_config: RoutingConfig = DEFAULT_ROUTING_CONFIG,
+        enable_reranking: bool = True,
+        rerank_candidate_pool_size: int = 100,
+    ) -> None:
+        if rerank_candidate_pool_size <= 0:
+            raise ValueError("rerank_candidate_pool_size must be positive")
         self.catalog_path = Path(catalog_path)
-        self.connection = sqlite3.connect(":memory:")
+        self.enable_intent_routing = enable_intent_routing
+        self.routing_config = routing_config
+        self.enable_reranking = enable_reranking
+        self.rerank_candidate_pool_size = rerank_candidate_pool_size
+        artifact_directory = self.catalog_path.parent
+        if embeddings_path is None:
+            embeddings_path = artifact_directory / "catalog_embeddings.npy"
+        if manifest_path is None:
+            manifest_path = artifact_directory / "catalog_embeddings.json"
+        self.catalog = load_catalog(self.catalog_path)
         self._sessions: dict[str, SessionState] = {}
-        self._build_index()
-
-    def _build_index(self) -> None:
-        cursor = self.connection.cursor()
-        cursor.execute(
-            "CREATE VIRTUAL TABLE products USING fts5("
-            "parent_asin UNINDEXED, title, categories, features, details, store, description, "
-            "tokenize='unicode61 remove_diacritics 2')"
+        self._intent_decisions: dict[str, IntentDecision] = {}
+        self.vocabulary = CatalogVocabulary()
+        for item in self.catalog.items:
+            self.vocabulary.add_product(item.as_product())
+        self.retriever = DualIndex(
+            self.catalog,
+            embeddings_path=embeddings_path,
+            manifest_path=manifest_path,
+            query_embedder=query_embedder,
         )
-        batch: list[tuple[str, str, str, str, str, str, str]] = []
-        with self.catalog_path.open(encoding="utf-8") as handle:
-            for line in handle:
-                product = json.loads(line)
-                batch.append(
-                    (
-                        str(product["parent_asin"]),
-                        _text(product.get("title")),
-                        _text(product.get("categories")),
-                        _text(product.get("features")),
-                        _text(product.get("details")),
-                        _text(product.get("store")),
-                        _text(product.get("description")),
-                    )
-                )
-                if len(batch) >= 1000:
-                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                    batch.clear()
-        if batch:
-            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-        self.connection.commit()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile is anonymized and may be used for personalization.
+        self._intent_decisions.pop(session_id, None)
         self._sessions[session_id] = SessionState(
-            user_profile=dict(user_profile)
+            user_profile=dict(user_profile),
+            vocabulary=self.vocabulary,
         )
 
     def respond(
@@ -88,37 +66,65 @@ class Agent:
         if session_id not in self._sessions:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
-        state.add_message(user_message)
-        unique_terms = list(dict.fromkeys(_terms(state.retrieval_context())))[:40]
-        expression = " OR ".join(f'"{term}"' for term in unique_terms)
-        if not expression:
-            recommendations: list[dict] = []
-        else:
-            rows = self.connection.execute(
-                "SELECT parent_asin, "
-                "bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) AS score "
-                "FROM products WHERE products MATCH ? ORDER BY score LIMIT ?",
-                (expression, top_k),
-            ).fetchall()
-            sparse_results = [
-                RankedResult(parent_asin=str(row[0]), score=float(row[1]), rank=rank)
-                for rank, row in enumerate(rows, start=1)
-            ]
-            # Dense candidates will be supplied here when the dual-index branch lands.
-            fused_results, _decision = route_and_fuse(
-                user_message,
-                state.active_constraints,
-                sparse_results,
-                [],
-                limit=top_k,
-                sparse_higher_is_better=False,
+        state.add_message(user_message, turn)
+        candidate_limit = top_k
+        if self.enable_reranking:
+            candidate_limit = min(
+                max(top_k, self.rerank_candidate_pool_size),
+                len(self.catalog.items),
             )
-            recommendations = [
-                {"parent_asin": result.parent_asin} for result in fused_results
-            ]
+        if self.enable_intent_routing:
+            retrieval_results, decision = self.retriever.search_intent_aware(
+                state.retrieval_context(),
+                user_message=user_message,
+                active_constraints=state.active_constraints,
+                known_brands=self.vocabulary.values_for("brand"),
+                known_categories=self.vocabulary.values_for("category"),
+                top_k=candidate_limit,
+                max_price=state.budget_ceiling(),
+                routing_config=self.routing_config,
+            )
+            self._intent_decisions[session_id] = decision
+        else:
+            retrieval_results = self.retriever.search(
+                state.retrieval_context(),
+                top_k=candidate_limit,
+                max_price=state.budget_ceiling(),
+            )
+        if self.enable_reranking:
+            results = rerank_candidates(
+                retrieval_results,
+                self.catalog.items_by_asin,
+                active_constraints=state.active_constraints,
+                negative_constraints=state.negative_constraints,
+                constraint_updated_at=state.constraint_updated_at,
+                top_k=top_k,
+            )
+        else:
+            results = retrieval_results[:top_k]
+        recommendations = [{"parent_asin": parent_asin} for parent_asin, _ in results]
+        candidates = [
+            self.catalog.items_by_asin[parent_asin]
+            for parent_asin, _ in results
+            if parent_asin in self.catalog.items_by_asin
+        ]
+        guidance = choose_clarification(
+            candidates,
+            # Preserve the established retrieval-confidence policy while using the
+            # reranked products to choose the most useful question.
+            candidate_scores=[score for _, score in retrieval_results[:top_k]],
+            force_clarification=state.guidance_requested,
+            unavailable_attributes=(
+                set(state.active_constraints)
+                | state.asked_attributes
+                | state.declined_attributes
+            ),
+        )
+        if guidance.ask_attribute is not None:
+            state.record_question(guidance.ask_attribute)
         return {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": None,
+            "message": guidance.message,
+            "ask_attribute": guidance.ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
