@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -102,7 +103,7 @@ class ExpectedInformationGainTest(unittest.TestCase):
         self.assertTrue(values["use_case"])
         self.assertTrue(set(values).issubset(ALLOWED_ASK_ATTRIBUTES))
 
-    def test_shared_multi_value_feature_retains_residual_uncertainty(self) -> None:
+    def test_shared_value_uncertainty_is_separate_from_selection_utility(self) -> None:
         candidates = [
             item("A", color="Red", feature=["shared cushioning", "alpha lace"]),
             item("B", color="Blue", feature=["shared cushioning", "beta lace"]),
@@ -111,7 +112,9 @@ class ExpectedInformationGainTest(unittest.TestCase):
 
         decision = choose_clarification(candidates)
 
-        self.assertEqual(decision.ask_attribute, "color")
+        self.assertEqual(decision.ask_attribute, "feature")
+        self.assertLess(decision.information_gain, math.log2(3))
+        self.assertAlmostEqual(decision.selection_utility, math.log2(3))
 
     def test_decisive_leading_score_suppresses_clarification(self) -> None:
         candidates = [item("A", color="Red"), item("B", color="Blue")]

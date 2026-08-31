@@ -83,6 +83,7 @@ class GuidanceDecision:
     ask_attribute: str | None
     message: str
     information_gain: float = 0.0
+    selection_utility: float = 0.0
 
 
 def _normalize(value: object) -> str:
@@ -208,6 +209,29 @@ def _attribute_information_gain(
     return max(0.0, prior_entropy - expected_posterior_entropy) * coverage
 
 
+def _attribute_selection_utility(
+    candidate_attributes: Sequence[Mapping[str, tuple[str, ...]]],
+    attribute: str,
+) -> float:
+    """Score how distinctly an attribute describes the retrieved catalog set."""
+
+    signatures = [attributes[attribute] for attributes in candidate_attributes]
+    known_count = sum(bool(signature) for signature in signatures)
+    if known_count == 0:
+        return 0.0
+
+    partitions = Counter(signature or ("<unknown>",) for signature in signatures)
+    if len(partitions) < 2:
+        return 0.0
+
+    total = len(signatures)
+    entropy = -sum(
+        (count / total) * math.log2(count / total)
+        for count in partitions.values()
+    )
+    return entropy * (known_count / total)
+
+
 def result_set_is_ambiguous(candidate_scores: Sequence[float] | None) -> bool:
     """Return whether the leading retrieval scores lack a decisive winner."""
 
@@ -238,20 +262,21 @@ def choose_clarification(
 
     candidate_attributes = [candidate_attribute_values(item) for item in candidates]
     best_attribute: str | None = None
-    best_gain = 0.0
+    best_utility = 0.0
     for attribute in ATTRIBUTE_ORDER:
         if attribute in unavailable:
             continue
-        gain = _attribute_information_gain(candidate_attributes, attribute)
-        if gain > best_gain + 1e-12:
+        utility = _attribute_selection_utility(candidate_attributes, attribute)
+        if utility > best_utility + 1e-12:
             best_attribute = attribute
-            best_gain = gain
+            best_utility = utility
 
     if best_attribute is not None:
         return GuidanceDecision(
             best_attribute,
             QUESTION_TEMPLATES[best_attribute],
-            best_gain,
+            _attribute_information_gain(candidate_attributes, best_attribute),
+            best_utility,
         )
 
     if "other" not in unavailable:
