@@ -48,6 +48,11 @@ CONSTRAINT_PREFIX_RE = re.compile(
 )
 BROWSING_FILLER_RE = re.compile(r",?\s*but i(?:'m| am) still exploring\b", re.IGNORECASE)
 NON_CONSTRAINT_PHRASES = ("ask me about", "not quite right", "please use your judgment")
+NO_PREFERENCE_RE = re.compile(
+    r"\b(?:don't|do not)\s+have\s+(?:an\s+)?(?:additional\s+)?preference\b|"
+    r"\bno\s+preference\b|\bplease\s+use\s+your\s+judgment\b",
+    re.IGNORECASE,
+)
 
 
 def _normalize(value: object) -> str:
@@ -136,12 +141,20 @@ class SessionState:
     active_constraints: dict[str, list[str]] = field(default_factory=dict)
     negative_constraints: dict[str, list[str]] = field(default_factory=dict)
     constraint_updated_at: dict[str, int] = field(default_factory=dict)
+    asked_attributes: set[str] = field(default_factory=set)
+    declined_attributes: set[str] = field(default_factory=set)
+    pending_ask_attribute: str | None = None
     _message_number: int = 0
 
     def add_message(self, message: str, turn: int | None = None) -> None:
         self.messages.append(message)
         self._message_number += 1
         update_turn = turn if turn is not None else self._message_number
+
+        if self.pending_ask_attribute is not None:
+            if NO_PREFERENCE_RE.search(message):
+                self.declined_attributes.add(self.pending_ask_attribute)
+            self.pending_ask_attribute = None
 
         removal = REMOVE_ATTRIBUTE_RE.search(message)
         if removal:
@@ -165,6 +178,13 @@ class SessionState:
         for span in negative_spans:
             message = message.replace(span, " ")
         self._add_constraints(message, update_turn)
+
+    def record_question(self, attribute: str) -> None:
+        normalized = attribute.strip().lower()
+        if not normalized:
+            return
+        self.asked_attributes.add(normalized)
+        self.pending_ask_attribute = normalized
 
     def _parts(self, constraint: str) -> list[tuple[str, str]]:
         has_category = bool(re.search(r"\b(?:looking for|need|want)\b", constraint, re.IGNORECASE))
