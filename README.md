@@ -24,7 +24,7 @@ The final public-set configuration is documented in [`docs/final_agent.md`](docs
 
 ## Final Public Results
 
-Using the official 50,000-product catalog, all 200 released development sessions, the validated dense artifacts, and a locally cached FastEmbed query model:
+Using the official 50,000-product catalog, all 200 released development sessions, the validated dense artifacts bundled in this repository, and a locally cached FastEmbed query model:
 
 | Metric | Result |
 | --- | ---: |
@@ -52,7 +52,7 @@ These are **public development-set results, not a guarantee of private-set perfo
 
 - Python **3.10+**; development and final validation were performed with Python 3.12.x.
 - Git.
-- Internet access for the initial dependency installation, catalog/artifact download, and one-time FastEmbed model cache. After those resources are present, evaluator runtime is local and does not initiate downloads.
+- Internet access for the initial dependency installation and one-time FastEmbed model cache. The official catalog and dense retrieval artifacts are already bundled in this repository; after dependencies and the query model are cached, evaluator runtime is local and does not initiate downloads.
 
 ### 1. Clone the repository
 
@@ -60,6 +60,8 @@ These are **public development-set results, not a guarantee of private-set perfo
 git clone https://github.com/TikTok-TechJam-2026-Team-RatLab/techjam-conversational-search.git
 cd techjam-conversational-search
 ```
+
+The official 50,000-product catalog and the validated dense retrieval artifacts used for the submitted score are already tracked in `data/`, so judges do **not** need to download, decompress, or move competition data manually after cloning.
 
 ### 2. Create a virtual environment and install dependencies
 
@@ -83,50 +85,38 @@ python -m pip install -r requirements.txt
 
 `requirements.txt` pins the optional dense-retrieval dependencies (`fastembed` and `numpy`). The agent retains a standard-library SQLite FTS fallback if dense resources are unavailable.
 
-### 3. Download the official catalog
+### 3. Verify the bundled catalog and dense artifacts
 
-Download `catalog.jsonl.gz` from the official [TechJam participant-kit release](https://github.com/TechJam2026/techjam-conversational-search/releases/tag/participant-kit), verify it against the organizer-provided `SHA256SUMS`, decompress it, and place the result at:
+The repository already contains the complete official catalog and the validated dense artifacts used for the submitted score:
 
 ```text
 data/catalog.jsonl
-```
-
-Expected catalog size: **50,000 products**.
-
-For example on Linux/macOS:
-
-```bash
-gzip -dk catalog.jsonl.gz
-mv catalog.jsonl data/catalog.jsonl
-```
-
-On Windows, decompress the `.gz` archive with your preferred archive tool and move `catalog.jsonl` into `data/`.
-
-### 4. Install the validated dense artifacts used for the submitted score
-
-Download both files from [Phase 1 Clean Retrieval Artifacts v1](https://github.com/TikTok-TechJam-2026-Team-RatLab/techjam-conversational-search/releases/tag/phase1-clean-artifacts-v1):
-
-```text
 data/catalog_embeddings.npy
 data/catalog_embeddings.json
 ```
 
-Published SHA-256 digests:
+`data/catalog.jsonl` is the organizer-provided frozen catalog, decompressed from the official participant-kit `catalog.jsonl.gz` without modification. It contains **50,000 products** and has SHA-256:
+
+```text
+da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67
+```
+
+Published SHA-256 digests for the dense artifacts:
 
 | Artifact | SHA-256 |
 | --- | --- |
 | `catalog_embeddings.npy` | `56737d96a7e81f4523f8f5122d399180d272420adec8d624e9ac541e4b20eaa6` |
 | `catalog_embeddings.json` | `c86c96e733a757b7804bdf4e12c5325b34809787f365fb21ca498177ff5a3bb0` |
 
-The manifest records the model, dimensions, catalog digest, and exact ASIN ordering. The agent rejects incompatible artifacts instead of silently using a mismatched vector matrix.
+The manifest records the embedding model, dimensions, official catalog digest, and exact ASIN ordering. The agent validates the dense artifacts against the bundled catalog before using them and rejects incompatible artifacts instead of silently using a mismatched vector matrix.
 
-Alternatively, regenerate the vectors locally from the official catalog:
+You do **not** need to download the catalog or regenerate the vectors to reproduce our submitted result. For development or independent embedding regeneration, run:
 
 ```bash
 python -m Scripts.generate_embeddings
 ```
 
-### 5. Cache the query embedding model once
+### 4. Cache the query embedding model once
 
 While online, run:
 
@@ -138,7 +128,7 @@ The expected shape is `(384,)`. Once cached, normal evaluator runs do not need n
 
 ## Steps to Reproduce the Results
 
-The commands below assume the full setup above, including the official catalog, both validated dense artifacts, and the cached query model.
+The commands below assume the bundled `data/catalog.jsonl` and dense artifacts are unchanged and the FastEmbed query model has been cached once. No separate catalog download or file placement is required.
 
 ### 1. Run the test suite
 
@@ -171,7 +161,7 @@ Reported tokens: 0
 
 The checked-in reference metrics are in [`docs/final_agent_results.json`](docs/final_agent_results.json).
 
-If the dense artifacts or cached query model are absent or invalid, the agent deliberately falls back to sparse retrieval. That fallback is functional, but it is **not** the configuration used for the `0.970814` submitted public score.
+If the bundled dense artifacts are removed/corrupted or the cached query model is unavailable, the agent deliberately falls back to sparse retrieval. That fallback remains functional, but it is **not** the configuration used for the `0.970814` submitted public score.
 
 ### Optional ablation/research commands
 
@@ -215,21 +205,24 @@ Parallel prototypes were deliberately reviewed rather than merged wholesale: use
 ## Repository Structure
 
 ```text
-starter/agent.py                  final Agent implementation and orchestration
-starter/session_state.py          multi-turn dialogue state and constraint tracking
-src/catalog_evidence.py           global catalog-fact retrieval and deterministic tie-breaking
-src/candidate_reranker.py         constraint-aware candidate reranking
-src/data_parser.py                strict, order-preserving catalog parser
-src/dual_index.py                 SQLite FTS retrieval and optional dense retrieval
-src/embedder.py                   local FastEmbed embedding generation/artifact validation
-src/intent_routing.py             deterministic intent classification, RRF, and DBSF
-src/proactive_guidance.py         deterministic clarification-question selection
-Scripts/generate_embeddings.py    reproducible catalog embedding generation
+starter/agent.py                   final Agent implementation and orchestration
+starter/session_state.py           multi-turn dialogue state and constraint tracking
+src/catalog_evidence.py            global catalog-fact retrieval and deterministic tie-breaking
+src/candidate_reranker.py          constraint-aware candidate reranking
+src/data_parser.py                 strict, order-preserving catalog parser
+src/dual_index.py                  SQLite FTS retrieval and optional dense retrieval
+src/embedder.py                    local FastEmbed embedding generation/artifact validation
+src/intent_routing.py              deterministic intent classification, RRF, and DBSF
+src/proactive_guidance.py          deterministic clarification-question selection
+Scripts/generate_embeddings.py     reproducible catalog embedding generation
 Scripts/evaluate_intent_routing.py routing/fusion ablation runner
-evaluator/local_evaluator.py      official public-set simulator and scorer
-data/public_set.jsonl             200 released development sessions
-docs/final_agent.md               final architecture, progression, results, and limitations
-docs/final_agent_results.json     reference final public metrics
+evaluator/local_evaluator.py       official public-set simulator and scorer
+data/catalog.jsonl                 bundled official 50,000-product catalog
+data/catalog_embeddings.npy        bundled normalized embeddings for all 50,000 products
+data/catalog_embeddings.json       bundled embedding validation manifest
+data/public_set.jsonl              200 released development sessions
+docs/final_agent.md                final architecture, progression, results, and limitations
+docs/final_agent_results.json      reference final public metrics
 ```
 
 ## Evaluation Metrics
@@ -269,6 +262,6 @@ See [`docs/agent_api_contract.json`](docs/agent_api_contract.json) for the machi
 
 ## Data Source and Competition Scope
 
-The organizer-provided catalog and sessions are derived from Amazon Reviews 2023 by McAuley Lab, UCSD. See [`DATA_ATTRIBUTION.md`](DATA_ATTRIBUTION.md) before using or redistributing the data.
+The organizer-provided catalog and sessions are derived from Amazon Reviews 2023 by McAuley Lab, UCSD. For submission reproducibility, the official frozen catalog is bundled unchanged at `data/catalog.jsonl`. See [`DATA_ATTRIBUTION.md`](DATA_ATTRIBUTION.md) for source attribution and applicable-use guidance.
 
 The competition dataset is read-only. The agent does not inject mock ASINs, read evaluator labels/target IDs at runtime, use private evaluation data, or depend on an external vector database or paid API.
