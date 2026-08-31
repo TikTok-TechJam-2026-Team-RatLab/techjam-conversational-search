@@ -110,6 +110,21 @@ python3 -m unittest discover -v
 
 See `docs/phase1_retrieval.md` for the branch comparison and design decision.
 
+## Constraint-Aware Candidate Reranking
+
+The Agent retrieves a bounded pool of 100 candidates, then deterministically reranks it using the
+active positive constraints, reliable structured negatives, budget proximity, catalog evidence,
+constraint recency, and the original retrieval order as a stable tie-breaker. This stage uses no
+external API and reports zero tokens.
+
+On the official 200 public sessions, sparse retrieval plus guidance and reranking scores Hit
+Rate@10 `0.810`, MRR `0.556538`, MTTC `4.530`, and TechnicalScore `0.701361`. With the validated
+dense artifacts, hybrid retrieval plus guidance and reranking scores Hit Rate@10 `0.830`, MRR
+`0.542571`, MTTC `4.220`, and TechnicalScore `0.713371`.
+
+See `docs/candidate_reranking.md` for the retrieval-order ablation, pool-depth decision, scenario
+metrics, and limitations.
+
 ## Agent Interface
 
 ```python
@@ -164,10 +179,12 @@ src/data_parser.py                validated, order-preserving catalog parser
 src/dual_index.py                 sparse index and optional dense fusion
 src/embedder.py                   local embedding generation and artifact manifest
 src/proactive_guidance.py         deterministic clarification-question selection
+src/candidate_reranker.py         deterministic constraint-aware candidate reranking
 Scripts/generate_embeddings.py    reproducible embedding build command
 starter/agent.py                  editable weak starter
 evaluator/local_evaluator.py      public-set simulator and scorer
 docs/proactive_guidance.md         guidance design, ablation, and evaluator results
+docs/candidate_reranking.md        reranking design, ablations, and evaluator results
 ```
 
 ## Judging and Submission Policy
