@@ -125,6 +125,23 @@ dense artifacts, hybrid retrieval plus guidance and reranking scores Hit Rate@10
 See `docs/candidate_reranking.md` for the retrieval-order ablation, pool-depth decision, scenario
 metrics, and limitations.
 
+## Intent-Aware Hybrid Routing
+
+The Agent retrieves independent sparse and dense candidate pools before fusion. Concrete
+buying turns use the validated weighted RRF policy, while exploratory browsing turns use
+distribution-based score fusion with a selected `0.30` sparse / `0.70` dense blend. The fused
+pool then flows through constraint-aware reranking and proactive guidance.
+
+On all 200 public sessions, intent-aware hybrid routing scores Hit Rate@10 `0.865`, MRR
+`0.538770`, MTTC `3.970`, and TechnicalScore `0.734731`, compared with `0.713371` for the
+previous fixed-fusion hybrid pipeline. The sparse-only routed fallback reproduces the validated
+`0.701361` sparse score exactly. Set `enable_intent_routing=False` on `Agent` to retain the fixed
+RRF ablation.
+
+Reproduce routed, fixed, and sparse-only comparisons with
+`python3 -m Scripts.evaluate_intent_routing`. See `docs/intent_routing.md` for the controlled
+weight ablation, scenario metrics, integration design, and known boundary trade-off.
+
 ## Agent Interface
 
 ```python
@@ -177,14 +194,17 @@ docs/baseline_results.json        reproducible weak-starter reference score
 docs/phase1_retrieval.md          Phase 1 implementation decision and limitations
 src/data_parser.py                validated, order-preserving catalog parser
 src/dual_index.py                 sparse index and optional dense fusion
+src/intent_routing.py             deterministic intent classification, RRF, and DBSF
 src/embedder.py                   local embedding generation and artifact manifest
 src/proactive_guidance.py         deterministic clarification-question selection
 src/candidate_reranker.py         deterministic constraint-aware candidate reranking
 Scripts/generate_embeddings.py    reproducible embedding build command
+Scripts/evaluate_intent_routing.py reproducible routing and fusion ablations
 starter/agent.py                  editable weak starter
 evaluator/local_evaluator.py      public-set simulator and scorer
 docs/proactive_guidance.md         guidance design, ablation, and evaluator results
 docs/candidate_reranking.md        reranking design, ablations, and evaluator results
+docs/intent_routing.md             intent routing integration and evaluator results
 ```
 
 ## Judging and Submission Policy

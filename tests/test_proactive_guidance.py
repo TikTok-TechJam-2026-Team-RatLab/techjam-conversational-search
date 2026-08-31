@@ -150,7 +150,7 @@ class AgentGuidanceIntegrationTest(unittest.TestCase):
             "".join(json.dumps(product) + "\n" for product in products),
             encoding="utf-8",
         )
-        self.agent = Agent(self.catalog_path)
+        self.agent = Agent(self.catalog_path, enable_intent_routing=False)
         self.agent.reset("session", {})
 
     def tearDown(self) -> None:
@@ -221,7 +221,7 @@ class AgentGuidanceIntegrationTest(unittest.TestCase):
             "".join(json.dumps(product) + "\n" for product in products),
             encoding="utf-8",
         )
-        agent = Agent(catalog_path)
+        agent = Agent(catalog_path, enable_intent_routing=False)
         agent.reset("budget-session", {})
 
         first = agent.respond("budget-session", "I want a shirt.", 1, 10)

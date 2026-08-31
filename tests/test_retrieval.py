@@ -194,6 +194,73 @@ class DualIndexTest(unittest.TestCase):
 
         self.assertEqual(results[0][0], "HIKING_BOOT")
 
+    def test_search_tracks_exposes_sparse_and_dense_candidates_separately(self) -> None:
+        matrix = np.asarray([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]], dtype=np.float32)
+        write_embedding_artifacts(
+            catalog=self.catalog,
+            matrix=matrix,
+            model_name="test-model",
+            embeddings_path=self.embeddings_path,
+            manifest_path=self.manifest_path,
+        )
+        index = DualIndex(
+            self.catalog,
+            embeddings_path=self.embeddings_path,
+            manifest_path=self.manifest_path,
+            query_embedder=FakeEmbedder([0.0, 1.0]),
+        )
+
+        sparse, dense = index.search_tracks("red cotton shirt", top_k=2)
+
+        self.assertEqual(sparse[0][0], "RED_SHIRT")
+        self.assertEqual(dense[0][0], "HIKING_BOOT")
+
+    def test_buying_route_matches_validated_fixed_rrf_by_default(self) -> None:
+        matrix = np.asarray([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]], dtype=np.float32)
+        write_embedding_artifacts(
+            catalog=self.catalog,
+            matrix=matrix,
+            model_name="test-model",
+            embeddings_path=self.embeddings_path,
+            manifest_path=self.manifest_path,
+        )
+        index = DualIndex(
+            self.catalog,
+            embeddings_path=self.embeddings_path,
+            manifest_path=self.manifest_path,
+            query_embedder=FakeEmbedder([0.0, 1.0]),
+        )
+
+        fixed = index.search("waterproof hiking shoes", top_k=3)
+        routed, decision = index.search_intent_aware(
+            "waterproof hiking shoes",
+            user_message="I need hiking shoes in size 10.",
+            active_constraints={"category": ["hiking shoes"], "size": ["size 10"]},
+            top_k=3,
+        )
+
+        self.assertEqual(decision.intent, "buying")
+        self.assertEqual(routed, fixed)
+
+    def test_intent_aware_search_preserves_sparse_fallback_without_artifacts(self) -> None:
+        index = DualIndex(
+            self.catalog,
+            embeddings_path=self.embeddings_path,
+            manifest_path=self.manifest_path,
+        )
+        expected = index.search_sparse("waterproof hiking shoes", top_k=3)[:2]
+
+        routed, decision = index.search_intent_aware(
+            "waterproof hiking shoes",
+            user_message="I'm looking for shoes, but I'm still exploring.",
+            active_constraints={"category": ["shoes"]},
+            known_categories={"shoes"},
+            top_k=2,
+        )
+
+        self.assertEqual(decision.intent, "browsing")
+        self.assertEqual(routed, expected)
+
     def test_price_ceiling_filters_sparse_and_dense_results(self) -> None:
         priced_products = [dict(product) for product in PRODUCTS]
         priced_products[0]["price"] = 100

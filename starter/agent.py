@@ -4,12 +4,13 @@ from pathlib import Path
 from src.candidate_reranker import rerank_candidates
 from src.data_parser import load_catalog
 from src.dual_index import DualIndex, QueryEmbedder
+from src.intent_routing import DEFAULT_ROUTING_CONFIG, IntentDecision, RoutingConfig
 from src.proactive_guidance import choose_clarification
 from starter.session_state import CatalogVocabulary, SessionState
 
 
 class Agent:
-    """State-aware retrieval with deterministic constraint-based candidate reranking."""
+    """State-aware routed retrieval, deterministic reranking, and guidance."""
 
     def __init__(
         self,
@@ -17,12 +18,16 @@ class Agent:
         embeddings_path: str | Path | None = None,
         manifest_path: str | Path | None = None,
         query_embedder: QueryEmbedder | None = None,
+        enable_intent_routing: bool = True,
+        routing_config: RoutingConfig = DEFAULT_ROUTING_CONFIG,
         enable_reranking: bool = True,
         rerank_candidate_pool_size: int = 100,
     ) -> None:
         if rerank_candidate_pool_size <= 0:
             raise ValueError("rerank_candidate_pool_size must be positive")
         self.catalog_path = Path(catalog_path)
+        self.enable_intent_routing = enable_intent_routing
+        self.routing_config = routing_config
         self.enable_reranking = enable_reranking
         self.rerank_candidate_pool_size = rerank_candidate_pool_size
         artifact_directory = self.catalog_path.parent
@@ -32,6 +37,7 @@ class Agent:
             manifest_path = artifact_directory / "catalog_embeddings.json"
         self.catalog = load_catalog(self.catalog_path)
         self._sessions: dict[str, SessionState] = {}
+        self._intent_decisions: dict[str, IntentDecision] = {}
         self.vocabulary = CatalogVocabulary()
         for item in self.catalog.items:
             self.vocabulary.add_product(item.as_product())
@@ -44,6 +50,7 @@ class Agent:
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile is anonymized and may be used for personalization.
+        self._intent_decisions.pop(session_id, None)
         self._sessions[session_id] = SessionState(
             user_profile=dict(user_profile),
             vocabulary=self.vocabulary,
@@ -66,11 +73,24 @@ class Agent:
                 max(top_k, self.rerank_candidate_pool_size),
                 len(self.catalog.items),
             )
-        retrieval_results = self.retriever.search(
-            state.retrieval_context(),
-            top_k=candidate_limit,
-            max_price=state.budget_ceiling(),
-        )
+        if self.enable_intent_routing:
+            retrieval_results, decision = self.retriever.search_intent_aware(
+                state.retrieval_context(),
+                user_message=user_message,
+                active_constraints=state.active_constraints,
+                known_brands=self.vocabulary.values_for("brand"),
+                known_categories=self.vocabulary.values_for("category"),
+                top_k=candidate_limit,
+                max_price=state.budget_ceiling(),
+                routing_config=self.routing_config,
+            )
+            self._intent_decisions[session_id] = decision
+        else:
+            retrieval_results = self.retriever.search(
+                state.retrieval_context(),
+                top_k=candidate_limit,
+                max_price=state.budget_ceiling(),
+            )
         if self.enable_reranking:
             results = rerank_candidates(
                 retrieval_results,

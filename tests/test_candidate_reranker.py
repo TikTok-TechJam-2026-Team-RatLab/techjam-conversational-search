@@ -7,6 +7,7 @@ from pathlib import Path
 
 from src.candidate_reranker import rerank_candidates
 from src.data_parser import load_catalog
+from src.intent_routing import IntentDecision, RoutingConfig
 from starter.agent import Agent
 
 
@@ -72,6 +73,39 @@ class RecordingRetriever:
         del query, max_price
         self.requested_top_k = top_k
         return self.results[:top_k]
+
+
+class RecordingRoutedRetriever(RecordingRetriever):
+    def __init__(self, results: list[tuple[str, float]]) -> None:
+        super().__init__(results)
+        self.user_message: str | None = None
+        self.active_constraints: dict[str, object] | None = None
+        self.routing_config: RoutingConfig | None = None
+
+    def search_intent_aware(
+        self,
+        query: str,
+        *,
+        user_message: str,
+        active_constraints: dict[str, object],
+        known_brands: object,
+        known_categories: object,
+        top_k: int,
+        max_price: float | None = None,
+        routing_config: RoutingConfig,
+    ) -> tuple[list[tuple[str, float]], IntentDecision]:
+        del query, known_brands, known_categories, max_price
+        self.requested_top_k = top_k
+        self.user_message = user_message
+        self.active_constraints = active_constraints
+        self.routing_config = routing_config
+        return self.results[:top_k], IntentDecision(
+            intent="buying",
+            confidence=1.0,
+            buying_score=3.0,
+            browsing_score=0.0,
+            signals=("test",),
+        )
 
 
 class CandidateRerankerTest(unittest.TestCase):
@@ -195,7 +229,12 @@ class AgentRerankingIntegrationTest(unittest.TestCase):
         self.temp_directory.cleanup()
 
     def test_agent_requests_bounded_pool_then_returns_requested_top_k(self) -> None:
-        agent = Agent(self.catalog_path, enable_reranking=True, rerank_candidate_pool_size=50)
+        agent = Agent(
+            self.catalog_path,
+            enable_intent_routing=False,
+            enable_reranking=True,
+            rerank_candidate_pool_size=50,
+        )
         retriever = RecordingRetriever(self.results)
         agent.retriever = retriever
         agent.reset("session", {})
@@ -206,7 +245,11 @@ class AgentRerankingIntegrationTest(unittest.TestCase):
         self.assertEqual(len(response["recommendations"]), 10)
 
     def test_retrieval_only_ablation_preserves_requested_depth_and_order(self) -> None:
-        agent = Agent(self.catalog_path, enable_reranking=False)
+        agent = Agent(
+            self.catalog_path,
+            enable_intent_routing=False,
+            enable_reranking=False,
+        )
         retriever = RecordingRetriever(self.results)
         agent.retriever = retriever
         agent.reset("session", {})
@@ -222,6 +265,29 @@ class AgentRerankingIntegrationTest(unittest.TestCase):
     def test_candidate_pool_size_must_be_positive(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be positive"):
             Agent(self.catalog_path, rerank_candidate_pool_size=0)
+
+    def test_intent_routing_runs_before_constraint_reranking(self) -> None:
+        agent = Agent(
+            self.catalog_path,
+            enable_intent_routing=True,
+            enable_reranking=True,
+            rerank_candidate_pool_size=50,
+        )
+        retriever = RecordingRoutedRetriever(self.results)
+        agent.retriever = retriever
+        agent.reset("session", {})
+
+        response = agent.respond(
+            "session",
+            "I'm looking for shirts. A key requirement is: feature 49.",
+            turn=1,
+            top_k=10,
+        )
+
+        self.assertEqual(retriever.requested_top_k, 50)
+        self.assertIn("feature 49", retriever.user_message or "")
+        self.assertIn("other", retriever.active_constraints or {})
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "ITEM_49")
 
 
 if __name__ == "__main__":

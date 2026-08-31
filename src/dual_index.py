@@ -4,10 +4,18 @@ import json
 import re
 import sqlite3
 import warnings
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Protocol
 
 from src.data_parser import CatalogData
+from src.intent_routing import (
+    DEFAULT_ROUTING_CONFIG,
+    IntentDecision,
+    RoutingConfig,
+    as_ranked_results,
+    route_and_fuse,
+)
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -277,14 +285,11 @@ class DualIndex:
         *,
         max_price: float | None = None,
     ) -> list[tuple[str, float]]:
+        """Run the validated fixed weighted-RRF retrieval path."""
+
+        sparse, dense = self.search_tracks(query, top_k=top_k, max_price=max_price)
         if top_k <= 0:
             return []
-        candidate_count = min(max(top_k * 5, top_k), len(self.catalog.asin_list))
-        sparse = self.search_sparse(query, top_k=candidate_count, max_price=max_price)
-        if self._dense_matrix is None:
-            return sparse[:top_k]
-
-        dense = self.search_dense(query, top_k=candidate_count, max_price=max_price)
         if not dense:
             return sparse[:top_k]
 
@@ -304,3 +309,56 @@ class DualIndex:
             key=lambda item: (-item[1], first_rank[item[0]], item[0]),
         )[:top_k]
         return ranked
+
+    def search_tracks(
+        self,
+        query: str,
+        top_k: int = 10,
+        *,
+        max_price: float | None = None,
+    ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+        """Return independent sparse and dense pools for downstream fusion.
+
+        Each source receives the same five-times candidate expansion used by the
+        established fixed-fusion path, so routing changes fusion rather than recall
+        depth. A missing artifact or unavailable local model yields an empty dense
+        track and leaves the sparse path usable.
+        """
+
+        if top_k <= 0:
+            return [], []
+        candidate_count = min(max(top_k * 5, top_k), len(self.catalog.asin_list))
+        sparse = self.search_sparse(query, top_k=candidate_count, max_price=max_price)
+        if self._dense_matrix is None:
+            return sparse, []
+        dense = self.search_dense(query, top_k=candidate_count, max_price=max_price)
+        return sparse, dense
+
+    def search_intent_aware(
+        self,
+        query: str,
+        *,
+        user_message: str,
+        active_constraints: Mapping[str, object] | None,
+        known_brands: Iterable[str] = (),
+        known_categories: Iterable[str] = (),
+        top_k: int = 10,
+        max_price: float | None = None,
+        routing_config: RoutingConfig = DEFAULT_ROUTING_CONFIG,
+    ) -> tuple[list[tuple[str, float]], IntentDecision]:
+        """Fuse independent tracks according to the current conversational intent."""
+
+        sparse, dense = self.search_tracks(query, top_k=top_k, max_price=max_price)
+        fused, decision = route_and_fuse(
+            user_message,
+            active_constraints,
+            as_ranked_results(sparse),
+            as_ranked_results(dense),
+            known_brands=known_brands,
+            known_categories=known_categories,
+            limit=top_k,
+            config=routing_config,
+            sparse_higher_is_better=False,
+            dense_higher_is_better=True,
+        )
+        return [(item.parent_asin, item.fused_score) for item in fused], decision
