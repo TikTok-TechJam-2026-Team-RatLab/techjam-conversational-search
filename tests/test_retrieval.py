@@ -194,6 +194,37 @@ class DualIndexTest(unittest.TestCase):
 
         self.assertEqual(results[0][0], "HIKING_BOOT")
 
+    def test_price_ceiling_filters_sparse_and_dense_results(self) -> None:
+        priced_products = [dict(product) for product in PRODUCTS]
+        priced_products[0]["price"] = 100
+        priced_products[1]["price"] = 40
+        priced_products[2]["price"] = 20
+        write_catalog(self.catalog_path, priced_products)
+        catalog = load_catalog(self.catalog_path)
+        matrix = np.asarray([[1.0, 0.0], [0.9, 0.1], [0.8, 0.2]], dtype=np.float32)
+        write_embedding_artifacts(
+            catalog=catalog,
+            matrix=matrix,
+            model_name="test-model",
+            embeddings_path=self.embeddings_path,
+            manifest_path=self.manifest_path,
+        )
+        index = DualIndex(
+            catalog,
+            embeddings_path=self.embeddings_path,
+            manifest_path=self.manifest_path,
+            query_embedder=FakeEmbedder([1.0, 0.0]),
+        )
+
+        sparse = index.search_sparse("shirt boot hat", top_k=3, max_price=50)
+        dense = index.search_dense_vector([1.0, 0.0], top_k=3, max_price=50)
+        hybrid = index.search("shirt boot hat", top_k=3, max_price=50)
+
+        self.assertNotIn("RED_SHIRT", [parent_asin for parent_asin, _ in sparse])
+        self.assertNotIn("RED_SHIRT", [parent_asin for parent_asin, _ in dense])
+        self.assertNotIn("RED_SHIRT", [parent_asin for parent_asin, _ in hybrid])
+        self.assertEqual(dense[0][0], "HIKING_BOOT")
+
     def test_catalog_change_invalidates_saved_embeddings(self) -> None:
         matrix = np.asarray([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]], dtype=np.float32)
         write_embedding_artifacts(

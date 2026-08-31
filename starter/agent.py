@@ -53,7 +53,11 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
         state.add_message(user_message, turn)
-        results = self.retriever.search(state.retrieval_context(), top_k=top_k)
+        results = self.retriever.search(
+            state.retrieval_context(),
+            top_k=top_k,
+            max_price=state.budget_ceiling(),
+        )
         recommendations = [{"parent_asin": parent_asin} for parent_asin, _ in results]
         candidates = [
             self.catalog.items_by_asin[parent_asin]
@@ -62,6 +66,8 @@ class Agent:
         ]
         guidance = choose_clarification(
             candidates,
+            candidate_scores=[score for _, score in results],
+            force_clarification=state.guidance_requested,
             unavailable_attributes=(
                 set(state.active_constraints)
                 | state.asked_attributes

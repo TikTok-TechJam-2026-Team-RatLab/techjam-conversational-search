@@ -12,16 +12,23 @@ the same generic response until the ten-turn limit.
 
 ## Design
 
-1. Retrieval runs exactly as before and produces the recommendations returned to the caller.
-2. The guidance module extracts supported attributes from those candidate products using structured
+1. Retrieval produces the recommendations returned to the caller. When the customer supplies a
+   budget, a structured maximum-price filter is applied to both sparse and dense candidates; products
+   with unknown prices remain eligible.
+2. A top result is treated as decisive only when its score is separated from the runner-up by at least
+   50% of their score scale. Otherwise the result set is ambiguous. An explicit customer rejection
+   also requests guidance even after a decisive result.
+3. The guidance module extracts supported attributes from those candidate products using structured
    categories, features, details, price, store, title, and description fields.
-3. For each available attribute, the candidate set is partitioned by its normalized values. Shannon
-   entropy measures the expected reduction in candidate uncertainty, discounted by catalog coverage.
-4. The highest-information attribute is mapped to the exact Agent API vocabulary and a deterministic
+4. For each available attribute, expected information gain uses a uniform candidate prior and models
+   the reply as one of that candidate's known values. Shared values therefore retain the correct
+   posterior uncertainty instead of treating each whole value tuple as a unique answer. The result is
+   discounted by catalog coverage.
+5. The highest-information attribute is mapped to the exact Agent API vocabulary and a deterministic
    question. Concrete attributes win ties.
-5. Each session records asked and explicitly declined attributes so an unhelpful question is not
+6. Each session records asked and explicitly declined attributes so an unhelpful question is not
    repeated. Existing constraints are also excluded from future questions.
-6. When no supported candidate attribute separates the results, the engine asks `other` once and
+7. When no supported candidate attribute separates the results, the engine asks `other` once and
    then safely falls back to `null`.
 
 The recommendation order, session isolation, reset behavior, API response keys, and zero-token usage
@@ -34,17 +41,17 @@ The implementation was evaluated on all 200 public sessions with the official 50
 | Configuration | Hit Rate@10 | MRR | MTTC | Efficiency | Technical score |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Previous sparse fallback | 0.195 | 0.128956 | 9.285 | 0.1715 | 0.170487 |
-| Sparse + proactive guidance | **0.675** | **0.427109** | **5.595** | **0.5405** | **0.573733** |
+| Sparse + reviewed proactive guidance | **0.665** | **0.419073** | **5.765** | **0.5235** | **0.562922** |
 | Previous hybrid retrieval | 0.255 | 0.125421 | 8.695 | 0.2305 | 0.211226 |
-| Hybrid + proactive guidance | **0.660** | **0.356950** | **5.660** | **0.5340** | **0.543885** |
+| Hybrid + reviewed proactive guidance | **0.655** | **0.347617** | **5.740** | **0.5260** | **0.536985** |
 
 Hybrid scenario results after proactive guidance:
 
 | Scenario | Hit Rate@10 | MRR | MTTC |
 | --- | ---: | ---: | ---: |
-| Boundary | 0.700000 | 0.317222 | 5.800000 |
-| Browsing | 0.712500 | 0.390858 | 5.537500 |
-| Buying | 0.600000 | 0.277163 | 5.587500 |
+| Boundary | 0.700000 | 0.317222 | 5.300000 |
+| Browsing | 0.712500 | 0.380025 | 5.662500 |
+| Buying | 0.587500 | 0.264663 | 5.725000 |
 | Intent override | 0.666667 | 0.492540 | 6.133333 |
 
 All runs report zero prompt and completion tokens. The hybrid result remains stronger than its prior

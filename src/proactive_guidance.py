@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
@@ -75,6 +75,7 @@ GENERIC_CATEGORIES = frozenset({
     "men",
     "women",
 })
+CONFIDENT_SCORE_MARGIN = 0.50
 
 
 @dataclass(frozen=True)
@@ -177,34 +178,62 @@ def _attribute_information_gain(
     attribute: str,
 ) -> float:
     signatures = [attributes[attribute] for attributes in candidate_attributes]
-    known_count = sum(bool(signature) for signature in signatures)
-    if known_count == 0:
+    known_signatures = [signature for signature in signatures if signature]
+    known_count = len(known_signatures)
+    if known_count < 2:
         return 0.0
 
-    # An empty signature is a real partition, but coverage discounts questions
-    # that many candidate products cannot answer.
-    partitions = Counter(signature or ("<unknown>",) for signature in signatures)
-    if len(partitions) < 2:
-        return 0.0
+    # Model a reply as one of a candidate's known values, selected uniformly.
+    # Unlike partitioning by the whole value tuple, this preserves the residual
+    # uncertainty of shared colors, materials, and features.
+    response_mass: Counter[str] = Counter()
+    response_candidate_mass: dict[str, Counter[int]] = defaultdict(Counter)
+    candidate_prior = 1.0 / known_count
+    for candidate_index, signature in enumerate(known_signatures):
+        joint_probability = candidate_prior / len(signature)
+        for response in signature:
+            response_mass[response] += joint_probability
+            response_candidate_mass[response][candidate_index] += joint_probability
 
-    total = len(signatures)
-    entropy = -sum(
-        (count / total) * math.log2(count / total)
-        for count in partitions.values()
-    )
-    coverage = known_count / total
-    return entropy * coverage
+    expected_posterior_entropy = 0.0
+    for response, probability in response_mass.items():
+        posterior_entropy = -sum(
+            (joint_probability / probability) * math.log2(joint_probability / probability)
+            for joint_probability in response_candidate_mass[response].values()
+        )
+        expected_posterior_entropy += probability * posterior_entropy
+
+    prior_entropy = math.log2(known_count)
+    coverage = known_count / len(signatures)
+    return max(0.0, prior_entropy - expected_posterior_entropy) * coverage
+
+
+def result_set_is_ambiguous(candidate_scores: Sequence[float] | None) -> bool:
+    """Return whether the leading retrieval scores lack a decisive winner."""
+
+    if candidate_scores is None or len(candidate_scores) < 2:
+        return True
+    leading, runner_up = candidate_scores[:2]
+    if not math.isfinite(leading) or not math.isfinite(runner_up):
+        return True
+    scale = max(abs(leading), abs(runner_up), 1e-12)
+    relative_margin = abs(leading - runner_up) / scale
+    return relative_margin < CONFIDENT_SCORE_MARGIN
 
 
 def choose_clarification(
     candidates: Sequence[CatalogItem],
     *,
+    candidate_scores: Sequence[float] | None = None,
+    force_clarification: bool = False,
     unavailable_attributes: Iterable[str] = (),
 ) -> GuidanceDecision:
     """Choose the supported attribute with the highest expected information gain."""
 
     unavailable = {str(attribute).lower() for attribute in unavailable_attributes}
     if len(candidates) == 1:
+        return GuidanceDecision(None, "Here are the closest matches I found.")
+    if candidates and not force_clarification and not result_set_is_ambiguous(candidate_scores):
         return GuidanceDecision(None, "Here are the closest matches I found.")
 
     candidate_attributes = [candidate_attribute_values(item) for item in candidates]

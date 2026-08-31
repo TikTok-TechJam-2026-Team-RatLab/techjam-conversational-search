@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.data_parser import CatalogItem
 from src.proactive_guidance import (
@@ -19,7 +20,7 @@ def item(
     *,
     color: str = "",
     material: str = "",
-    feature: str = "same feature",
+    feature: str | list[str] = "same feature",
 ) -> CatalogItem:
     details = {}
     if color:
@@ -30,7 +31,7 @@ def item(
         parent_asin=parent_asin,
         title=f"{color} {material} shirt".strip(),
         categories=["Clothing", "Shirts"],
-        features=[feature] if feature else [],
+        features=feature if isinstance(feature, list) else ([feature] if feature else []),
         details=details,
         description=[],
         price=None,
@@ -101,6 +102,26 @@ class ExpectedInformationGainTest(unittest.TestCase):
         self.assertTrue(values["use_case"])
         self.assertTrue(set(values).issubset(ALLOWED_ASK_ATTRIBUTES))
 
+    def test_shared_multi_value_feature_retains_residual_uncertainty(self) -> None:
+        candidates = [
+            item("A", color="Red", feature=["shared cushioning", "alpha lace"]),
+            item("B", color="Blue", feature=["shared cushioning", "beta lace"]),
+            item("C", color="Blue", feature=["shared cushioning", "gamma lace"]),
+        ]
+
+        decision = choose_clarification(candidates)
+
+        self.assertEqual(decision.ask_attribute, "color")
+
+    def test_decisive_leading_score_suppresses_clarification(self) -> None:
+        candidates = [item("A", color="Red"), item("B", color="Blue")]
+
+        decisive = choose_clarification(candidates, candidate_scores=[-10.0, -5.0])
+        close = choose_clarification(candidates, candidate_scores=[-10.0, -9.5])
+
+        self.assertIsNone(decisive.ask_attribute)
+        self.assertEqual(close.ask_attribute, "color")
+
 
 class AgentGuidanceIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -136,12 +157,84 @@ class AgentGuidanceIntegrationTest(unittest.TestCase):
         response = self.agent.respond("session", "I want a shirt.", 1, 10)
 
         self.assertEqual(
-            {item["parent_asin"] for item in response["recommendations"]},
-            {"RED_SHIRT", "BLUE_SHIRT"},
+            [item["parent_asin"] for item in response["recommendations"]],
+            ["RED_SHIRT", "BLUE_SHIRT"],
         )
         self.assertEqual(response["ask_attribute"], "color")
         self.assertIn(response["ask_attribute"], ALLOWED_ASK_ATTRIBUTES)
         self.assertEqual(response["usage"], {"prompt_tokens": 0, "completion_tokens": 0})
+        self.assertEqual(
+            set(response),
+            {"message", "ask_attribute", "recommendations", "usage"},
+        )
+
+    def test_successful_clarification_reply_changes_ranking(self) -> None:
+        first = self.agent.respond("session", "I want a shirt.", 1, 10)
+        second = self.agent.respond("session", "Blue.", 2, 10)
+
+        self.assertEqual(first["ask_attribute"], "color")
+        self.assertEqual(second["recommendations"][0]["parent_asin"], "BLUE_SHIRT")
+
+    def test_explicit_rejection_overrides_a_decisive_score_margin(self) -> None:
+        with patch.object(
+            self.agent.retriever,
+            "search",
+            return_value=[("RED_SHIRT", -10.0), ("BLUE_SHIRT", -5.0)],
+        ):
+            first = self.agent.respond("session", "I want a shirt.", 1, 10)
+            second = self.agent.respond(
+                "session",
+                "Those options are not quite right yet. Ask me about one specific attribute.",
+                2,
+                10,
+            )
+
+        self.assertIsNone(first["ask_attribute"])
+        self.assertEqual(second["ask_attribute"], "color")
+
+    def test_budget_reply_filters_out_products_above_ceiling(self) -> None:
+        catalog_path = Path(self.temp_directory.name) / "priced_catalog.jsonl"
+        products = [
+            {
+                "parent_asin": "AFFORDABLE",
+                "title": "Basic shirt",
+                "categories": ["Clothing", "Shirts"],
+                "features": ["soft fabric"],
+                "details": {"Material": "Cotton"},
+                "price": 24.99,
+                "store": "Same Store",
+            },
+            {
+                "parent_asin": "EXPENSIVE",
+                "title": "Basic shirt",
+                "categories": ["Clothing", "Shirts"],
+                "features": ["soft fabric"],
+                "details": {"Material": "Cotton"},
+                "price": 80,
+                "store": "Same Store",
+            },
+        ]
+        catalog_path.write_text(
+            "".join(json.dumps(product) + "\n" for product in products),
+            encoding="utf-8",
+        )
+        agent = Agent(catalog_path)
+        agent.reset("budget-session", {})
+
+        first = agent.respond("budget-session", "I want a shirt.", 1, 10)
+        second = agent.respond(
+            "budget-session",
+            "For that, what matters is: budget around $24.99.",
+            2,
+            10,
+        )
+
+        self.assertEqual(first["ask_attribute"], "budget")
+        self.assertEqual(agent._sessions["budget-session"].budget_ceiling(), 24.99)
+        self.assertEqual(
+            [product["parent_asin"] for product in second["recommendations"]],
+            ["AFFORDABLE"],
+        )
 
     def test_declined_attribute_is_recorded_and_not_repeated(self) -> None:
         first = self.agent.respond("session", "I want a shirt.", 1, 10)
