@@ -1,2 +1,1 @@
-"""Participant starter package."""
-
+# starter/__init__.py
