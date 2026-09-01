@@ -7,9 +7,6 @@ data/catalog.jsonl
 data/releases/
 data/catalog_embeddings.npy
 data/catalog_embeddings.json
-data/parsed_catalog.jsonl
-data/bm25s_index/
-data/faiss_hnsw.index
 catalog.jsonl.gz
 SHA256SUMS
 libs/

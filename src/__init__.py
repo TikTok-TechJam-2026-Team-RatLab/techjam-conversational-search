@@ -1,1 +1,1 @@
-"""Catalog parsing and retrieval components for the shopping agent."""
+# src/__init__.py

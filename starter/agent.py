@@ -7,7 +7,7 @@ from src.data_parser import load_catalog
 from src.dual_index import DualIndex, QueryEmbedder
 from src.intent_routing import DEFAULT_ROUTING_CONFIG, IntentDecision, RoutingConfig
 from src.proactive_guidance import GuidanceDecision, choose_clarification
-from starter.session_state import CatalogVocabulary, SessionState
+from src.session_state import CatalogVocabulary, SessionState
 
 
 BROAD_CLARIFICATION_MESSAGES = (

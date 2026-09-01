@@ -104,11 +104,12 @@ On Windows, decompress the `.gz` archive with your preferred archive tool and mo
 
 ### 4. Install the validated dense artifacts used for the submitted score
 
-Download both files from [Phase 1 Clean Retrieval Artifacts v1](https://github.com/TikTok-TechJam-2026-Team-RatLab/techjam-conversational-search/releases/tag/phase1-clean-artifacts-v1):
+Download both files from [Phase 1 Clean Retrieval Artifacts v1](https://github.com/TikTok-TechJam-2026-Team-RatLab/techjam-conversational-search/releases/tag/phase1-clean-artifacts-v1) and move them to `data/` folder.
 
-```text
-data/catalog_embeddings.npy
-data/catalog_embeddings.json
+For example on Linux/macOS:
+
+```bash
+mv catalog_embeddings.json catalog_embeddings.npy data/
 ```
 
 Published SHA-256 digests:
@@ -126,9 +127,11 @@ Alternatively, regenerate the vectors locally from the official catalog:
 python -m Scripts.generate_embeddings
 ```
 
+This requires internet connection to download and cache the initial language model, though the embeddings generation afterwards is done locally.
+
 ### 5. Cache the query embedding model once
 
-While online, run:
+With internet connection, run:
 
 ```bash
 python -c "from src.embedder import Embedder; print(Embedder(local_files_only=False).embed_query('setup check').shape)"
@@ -183,11 +186,11 @@ python -m Scripts.evaluate_intent_routing
 
 Additional design decisions and controlled ablations are documented in:
 
-- [`docs/phase1_retrieval.md`](docs/phase1_retrieval.md)
-- [`docs/proactive_guidance.md`](docs/proactive_guidance.md)
-- [`docs/candidate_reranking.md`](docs/candidate_reranking.md)
-- [`docs/intent_routing.md`](docs/intent_routing.md)
-- [`docs/final_agent.md`](docs/final_agent.md)
+- [`docs/design/phase1_retrieval.md`](docs/design/phase1_retrieval.md)
+- [`docs/design/proactive_guidance.md`](docs/design/proactive_guidance.md)
+- [`docs/design/candidate_reranking.md`](docs/design/candidate_reranking.md)
+- [`docs/design/intent_routing.md`](docs/design/intent_routing.md)
+- [`docs/design/final_agent.md`](docs/design/final_agent.md)
 
 ## Limitations and Future Improvements
 
@@ -216,7 +219,7 @@ Parallel prototypes were deliberately reviewed rather than merged wholesale: use
 
 ```text
 starter/agent.py                  final Agent implementation and orchestration
-starter/session_state.py          multi-turn dialogue state and constraint tracking
+src/session_state.py              multi-turn dialogue state and constraint tracking
 src/catalog_evidence.py           global catalog-fact retrieval and deterministic tie-breaking
 src/candidate_reranker.py         constraint-aware candidate reranking
 src/data_parser.py                strict, order-preserving catalog parser
